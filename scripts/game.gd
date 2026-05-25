@@ -125,10 +125,12 @@ func load_level(level_index: int) -> void:
 	_spawn_exit_if_present(info)
 	_spawn_door_if_present(info)
 
-	# Place puppy at start
+	if puppy.has_method("set_maze_data"):
+		puppy.set_maze_data(lines, ts)
+
 	puppy.global_position = info["start"]
 	if puppy.has_method("snap_to_floor"):
-		puppy.call("snap_to_floor")
+		puppy.snap_to_floor()
 
 	has_last_target = false
 	last_target = Vector3.ZERO
@@ -373,6 +375,8 @@ func _spawn_door_if_present(info: Dictionary) -> void:
 		return
 
 	door_unlock_center = door_body.global_position
+	if puppy.has_method("set_door_blocking"):
+		puppy.set_door_blocking(true, door_unlock_center)
 
 	door_area = Area3D.new()
 	door_area.name = "DoorArea"
@@ -456,7 +460,9 @@ func _open_door() -> void:
 	door_opened = true
 	_set_hint("Door opened!")
 
-	# Remove the actual blocking door body created by the builder
+	if puppy.has_method("set_door_blocking"):
+		puppy.set_door_blocking(false)
+
 	if is_instance_valid(door_body):
 		door_body.queue_free()
 	door_body = null
@@ -609,5 +615,8 @@ func _clear_runtime_pickups() -> void:
 	door_unlock_center = Vector3.ZERO
 	has_key = false
 	door_opened = false
+
+	if puppy != null and puppy.has_method("set_door_blocking"):
+		puppy.set_door_blocking(false)
 
 	_hide_win_panel()
