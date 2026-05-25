@@ -39,10 +39,12 @@ var key_area: Area3D = null
 var exit_node: Node3D = null
 var exit_area: Area3D = null
 
-var door_node: Node3D = null
 var door_area: Area3D = null
 var door_body: StaticBody3D = null
+var door_unlock_center: Vector3 = Vector3.ZERO
 var door_opened: bool = false
+
+@export var door_unlock_radius: float = 1.1
 
 # --- UI ---
 var ui_layer: CanvasLayer = null
@@ -76,6 +78,7 @@ func _ready() -> void:
 	builder = MazeBuilderScript.new()
 
 	_build_ui()
+	set_physics_process(true)
 	load_level(0)
 
 	if debug_enabled:
@@ -125,6 +128,10 @@ func load_level(level_index: int) -> void:
 	last_target = Vector3.ZERO
 	_hide_win_panel()
 	_set_hint("")
+
+
+func _physics_process(_delta: float) -> void:
+	_try_unlock_door_near_puppy()
 
 
 func _find_first_camera_3d(root: Node) -> Camera3D:
@@ -332,39 +339,41 @@ func _spawn_door_if_present(info: Dictionary) -> void:
 			print("No door in this level.")
 		return
 
-	# Find the door body created by MazeBuilder (named "Door")
-	# Choose the closest to the expected door position.
-	var pos: Vector3 = info.door
-	var doors := maze_root.find_children("Door", "StaticBody3D", true, false)
-	door_body = null
-	var best_d := 999999.0
+	door_body = info.get("door_body") as StaticBody3D
+	if door_body == null or not is_instance_valid(door_body):
+		var doors := maze_root.find_children("Door", "StaticBody3D", true, false)
+		var pos: Vector3 = info.door
+		var best_d := 999999.0
+		for d in doors:
+			var sb := d as StaticBody3D
+			if sb == null:
+				continue
+			var dist := sb.global_position.distance_to(maze_root.to_global(pos))
+			if dist < best_d:
+				best_d = dist
+				door_body = sb
 
-	for d in doors:
-		var sb := d as StaticBody3D
-		if sb == null:
-			continue
-		var dist := sb.global_position.distance_to(pos)
-		if dist < best_d:
-			best_d = dist
-			door_body = sb
+	if door_body == null:
+		if debug_enabled:
+			print("Door marker present but no door body found.")
+		return
 
-	# Add a simple trigger area at the door position
-	door_node = Node3D.new()
-	door_node.name = "DoorTrigger"
-	door_node.position = pos + Vector3(0.0, 0.35, 0.0)
-	maze_root.add_child(door_node)
+	door_unlock_center = door_body.global_position
 
+	# Trigger on the actual door mesh (not the tile center) so touch unlock works.
 	door_area = Area3D.new()
 	door_area.name = "DoorArea"
-	door_node.add_child(door_area)
+	door_area.monitoring = true
+	door_area.collision_layer = 0
+	door_area.collision_mask = 1
+	door_body.add_child(door_area)
 
 	var col := CollisionShape3D.new()
 	var shape := SphereShape3D.new()
-	shape.radius = 0.45
+	shape.radius = door_unlock_radius
 	col.shape = shape
 	door_area.add_child(col)
 
-	door_area.monitoring = true
 	door_area.body_entered.connect(_on_door_body_entered)
 
 
@@ -386,17 +395,35 @@ func _on_key_body_entered(body: Node) -> void:
 	key_node = null
 	key_area = null
 
+	_try_unlock_door_near_puppy()
+
 
 func _on_door_body_entered(body: Node) -> void:
 	if body != puppy:
 		return
-	if door_opened:
+	_try_unlock_door()
+
+
+func _try_unlock_door_near_puppy() -> void:
+	if not has_key or door_opened or puppy == null:
+		return
+	if door_body == null or not is_instance_valid(door_body):
 		return
 
+	var puppy_pos := puppy.global_position
+	puppy_pos.y = 0.0
+	var door_pos := door_unlock_center
+	door_pos.y = 0.0
+	if puppy_pos.distance_to(door_pos) <= door_unlock_radius:
+		_try_unlock_door()
+
+
+func _try_unlock_door() -> void:
+	if door_opened:
+		return
 	if not has_key:
 		_set_hint("Door is locked. Need the key.")
 		return
-
 	_open_door()
 
 
@@ -409,10 +436,6 @@ func _open_door() -> void:
 		door_body.queue_free()
 	door_body = null
 
-	# Optional: remove trigger too
-	if door_node:
-		door_node.queue_free()
-	door_node = null
 	door_area = null
 
 
@@ -539,12 +562,12 @@ func _clear_runtime_pickups() -> void:
 	exit_node = null
 	exit_area = null
 
-	if door_node:
-		door_node.queue_free()
-	door_node = null
+	if door_area and is_instance_valid(door_area):
+		door_area.queue_free()
 	door_area = null
 
 	door_body = null
+	door_unlock_center = Vector3.ZERO
 	has_key = false
 	door_opened = false
 

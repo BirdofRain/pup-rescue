@@ -19,19 +19,27 @@ const BREED_MESH_PATHS: Dictionary = {
 @export var slow_radius: float = 2.0
 @export var min_speed_factor: float = 0.15
 
+# Tighter capsule + slide margin reduces snagging on maze corners.
+@export var collision_radius: float = 0.22
+@export var collision_height: float = 0.45
+
 # Debug toggles
 @export var debug_enabled: bool = true
 @export var debug_log_target: bool = false
 @export var debug_log_stop: bool = false
 
 @onready var model: MeshInstance3D = $Model
+@onready var collision_shape: CollisionShape3D = $CollisionShape3D
 
 var target_point: Vector3 = Vector3.ZERO
 var has_target: bool = false
 
 
 func _ready() -> void:
+	safe_margin = 0.08
+	floor_snap_length = 0.1
 	_apply_breed_mesh()
+	_apply_collision_shape()
 	if debug_enabled:
 		print("\n=== Puppy Controller _ready ===")
 		print("Puppy node path:", get_path())
@@ -46,6 +54,16 @@ func _apply_breed_mesh() -> void:
 	var mesh_res: Mesh = load(mesh_path) as Mesh
 	if mesh_res != null:
 		model.mesh = mesh_res
+
+
+func _apply_collision_shape() -> void:
+	if collision_shape == null:
+		return
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = collision_radius
+	capsule.height = collision_height
+	collision_shape.shape = capsule
+	collision_shape.position = Vector3(0.0, collision_height * 0.5, 0.0)
 
 
 func set_target(p: Vector3) -> void:
@@ -79,6 +97,17 @@ func _physics_process(delta: float) -> void:
 
 	velocity = velocity.move_toward(desired, accel * delta)
 	move_and_slide()
+
+	# Nudge along walls when stuck in a corner but still far from the target.
+	if has_target and dist > stop_radius * 2.0:
+		var flat_vel := velocity
+		flat_vel.y = 0.0
+		if flat_vel.length() < 0.35:
+			var slide_dir := desired - flat_vel
+			slide_dir.y = 0.0
+			if slide_dir.length() > 0.01:
+				velocity += slide_dir.normalized() * accel * delta * 0.5
+				move_and_slide()
 
 	var flat_v: Vector3 = velocity
 	flat_v.y = 0.0

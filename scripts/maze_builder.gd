@@ -74,7 +74,10 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D) -> Dictionary
 
 	# Add the door physical blocker (if present)
 	if info.door != null:
-		_add_door_block(lines, cols, rows, walls, Vector2i(int(info.door.x / tile_size), int(info.door.z / tile_size)))
+		info["door_body"] = _add_door_block(
+			lines, cols, rows, walls,
+			Vector2i(int(info.door.x / tile_size), int(info.door.z / tile_size))
+		)
 
 	return info
 
@@ -159,7 +162,7 @@ func _mark_horiz_endpoint(d: Dictionary, vx: int, vz: int) -> void:
 
 # -------------------- door --------------------
 
-func _add_door_block(lines: PackedStringArray, cols: int, rows: int, parent: Node3D, door_cell: Vector2i) -> void:
+func _add_door_block(lines: PackedStringArray, cols: int, rows: int, parent: Node3D, door_cell: Vector2i) -> StaticBody3D:
 	var x := door_cell.x
 	var z := door_cell.y
 
@@ -221,6 +224,7 @@ func _add_door_block(lines: PackedStringArray, cols: int, rows: int, parent: Nod
 	shape.size = size
 	col.shape = shape
 	body.add_child(col)
+	return body
 
 # -------------------- segment --------------------
 
