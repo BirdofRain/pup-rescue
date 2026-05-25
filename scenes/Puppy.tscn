@@ -1,0 +1,16 @@
+[gd_scene format=3 uid="uid://cm70lggfawn1j"]
+
+[ext_resource type="Script" uid="uid://bahg518csiyar" path="res://scripts/puppy_controller.gd" id="1_6wfnm"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_puppy"]
+size = Vector3(0.7, 0.5, 0.7)
+
+[node name="Puppy" type="CharacterBody3D" unique_id=1989989181]
+script = ExtResource("1_6wfnm")
+
+[node name="Model" type="MeshInstance3D" parent="." unique_id=6369259]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.25, 0)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=124759427]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.25, 0)
+shape = SubResource("BoxShape3D_puppy")

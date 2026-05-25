@@ -1,0 +1,67 @@
+[gd_scene format=3 uid="uid://bnii02ts0m3mr"]
+
+[ext_resource type="PackedScene" uid="uid://cm70lggfawn1j" path="res://scenes/Puppy.tscn" id="1_ibkli"]
+[ext_resource type="Script" uid="uid://dvs1a0h5eg63i" path="res://scripts/game.gd" id="1_qbsmt"]
+[ext_resource type="Script" uid="uid://cutj5hik14n3h" path="res://scripts/camera3D.gd" id="3_cpr0p"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_sb48q"]
+albedo_color = Color(0.69803923, 0.7882353, 1, 1)
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_t88pq"]
+material = SubResource("StandardMaterial3D_sb48q")
+size = Vector2(30, 30)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_qbsmt"]
+albedo_color = Color(1, 0.654902, 1, 1)
+metallic = 0.28
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_r0x5m"]
+size = Vector3(30, 0.1, 30)
+
+[node name="Game" type="Node3D" unique_id=1034514053]
+script = ExtResource("1_qbsmt")
+auto_fit_camera_on_load = true
+
+[node name="World" type="Node3D" parent="." unique_id=1717176938]
+
+[node name="MazeRoot" type="Node3D" parent="World" unique_id=1450935334]
+
+[node name="ActorsRoot" type="Node3D" parent="World" unique_id=433510820]
+
+[node name="Puppy" parent="World/ActorsRoot" unique_id=1989989181 groups=["player"] instance=ExtResource("1_ibkli")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0.5, 2)
+
+[node name="ItemsRoot" type="Node3D" parent="World" unique_id=1795068465]
+
+[node name="Floor" type="StaticBody3D" parent="World" unique_id=521180378]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="World/Floor" unique_id=502281570]
+mesh = SubResource("PlaneMesh_t88pq")
+surface_material_override/0 = SubResource("StandardMaterial3D_qbsmt")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="World/Floor" unique_id=2051393757]
+shape = SubResource("BoxShape3D_r0x5m")
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1105030801 groups=["main_camera"]]
+transform = Transform3D(1, 0, 0, 0, 0.25375792, 0.96726775, 0, -0.96726775, 0.25375792, 9.935, 8.68, 10.14)
+h_offset = -1.085
+v_offset = -0.61
+fov = 119.4
+near = 0.1
+script = ExtResource("3_cpr0p")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1970681611]
+transform = Transform3D(-0.7581345, -0.58153963, 0.29503196, 7.91062e-08, 0.45243472, 0.89179754, -0.6520983, 0.67610246, -0.3430063, 0, 0, 0)
+light_color = Color(1, 0.9791445, 0.8981435, 1)
+light_specular = 0.0
+shadow_enabled = true
+shadow_bias = 0.0
+shadow_normal_bias = 4.919
+shadow_reverse_cull_face = true
+shadow_opacity = 0.81
+shadow_blur = 7.591
+directional_shadow_split_1 = 0.319
+directional_shadow_split_2 = 0.214
+directional_shadow_split_3 = 0.106
+directional_shadow_max_distance = 13.5
+sky_mode = 1
