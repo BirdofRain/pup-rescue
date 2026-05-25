@@ -70,7 +70,7 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D) -> Dictionary
 	walls.name = "Walls"
 	maze_root.add_child(walls)
 
-	_build_thin_boundary_walls(lines, cols, rows, walls)
+	_build_solid_wall_tiles(lines, cols, rows, walls)
 
 	# Add the door physical blocker (if present)
 	if info.door != null:
@@ -93,72 +93,18 @@ func _is_walkable(lines: PackedStringArray, x: int, z: int, cols: int, rows: int
 		return false
 	return (lines[z].unicode_at(x) != CP_WALL)
 
-func _build_thin_boundary_walls(lines: PackedStringArray, cols: int, rows: int, walls_root: Node3D) -> void:
-	var t: float = tile_size * wall_thickness_ratio
+# One solid collider per wall tile. Thin edge-only walls left hollow interiors
+# that the puppy could walk through.
+func _build_solid_wall_tiles(lines: PackedStringArray, cols: int, rows: int, walls_root: Node3D) -> void:
 	var y_center: float = wall_height * 0.5
-
-	# Track endpoints so we can place tiny flush squares ONLY at real junctions
-	var vert_endpoints: Dictionary = {} # key "vx,vz" -> true
-	var horiz_endpoints: Dictionary = {}
+	var tile := Vector3(tile_size, wall_height, tile_size)
 
 	for z in range(rows):
 		for x in range(cols):
 			if not _is_wall(lines, x, z, cols, rows):
 				continue
-
-			# left edge (x-0.5), runs along Z
-			if not _is_wall(lines, x - 1, z, cols, rows):
-				var cx := (float(x) - 0.5) * tile_size
-				var cz := float(z) * tile_size
-				_add_segment(walls_root, Vector3(cx, y_center, cz), Vector3(t, wall_height, tile_size))
-				_mark_vert_endpoint(vert_endpoints, x, z)
-				_mark_vert_endpoint(vert_endpoints, x, z + 1)
-
-			# right edge (x+0.5), runs along Z
-			if not _is_wall(lines, x + 1, z, cols, rows):
-				var cx := (float(x) + 0.5) * tile_size
-				var cz := float(z) * tile_size
-				_add_segment(walls_root, Vector3(cx, y_center, cz), Vector3(t, wall_height, tile_size))
-				_mark_vert_endpoint(vert_endpoints, x + 1, z)
-				_mark_vert_endpoint(vert_endpoints, x + 1, z + 1)
-
-			# up edge (z-0.5), runs along X
-			if not _is_wall(lines, x, z - 1, cols, rows):
-				var cx := float(x) * tile_size
-				var cz := (float(z) - 0.5) * tile_size
-				_add_segment(walls_root, Vector3(cx, y_center, cz), Vector3(tile_size, wall_height, t))
-				_mark_horiz_endpoint(horiz_endpoints, x, z)
-				_mark_horiz_endpoint(horiz_endpoints, x + 1, z)
-
-			# down edge (z+0.5), runs along X
-			if not _is_wall(lines, x, z + 1, cols, rows):
-				var cx := float(x) * tile_size
-				var cz := (float(z) + 0.5) * tile_size
-				_add_segment(walls_root, Vector3(cx, y_center, cz), Vector3(tile_size, wall_height, t))
-				_mark_horiz_endpoint(horiz_endpoints, x, z + 1)
-				_mark_horiz_endpoint(horiz_endpoints, x + 1, z + 1)
-
-	# Place a tiny flush square ONLY where a vertical endpoint and horizontal endpoint share the same corner key
-	if corner_fill:
-		var s: float = t + corner_fill_epsilon
-		for key: String in vert_endpoints.keys():
-			if not horiz_endpoints.has(key):
-				continue
-
-			var parts: PackedStringArray = key.split(",")
-			var vx: int = int(parts[0])
-			var vz: int = int(parts[1])
-
-			# Vertex (vx,vz) -> world corner at ((vx-0.5)*tile, (vz-0.5)*tile)
-			var wx: float = (float(vx) - 0.5) * tile_size
-			var wz: float = (float(vz) - 0.5) * tile_size
-			_add_segment(walls_root, Vector3(wx, y_center, wz), Vector3(s, wall_height, s))
-
-func _mark_vert_endpoint(d: Dictionary, vx: int, vz: int) -> void:
-	d["%d,%d" % [vx, vz]] = true
-
-func _mark_horiz_endpoint(d: Dictionary, vx: int, vz: int) -> void:
-	d["%d,%d" % [vx, vz]] = true
+			var center := Vector3(float(x) * tile_size, y_center, float(z) * tile_size)
+			_add_segment(walls_root, center, tile)
 
 # -------------------- door --------------------
 

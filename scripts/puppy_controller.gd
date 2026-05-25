@@ -38,8 +38,10 @@ var has_target: bool = false
 func _ready() -> void:
 	collision_layer = 2  # player
 	collision_mask = 1   # world (walls, floor)
-	safe_margin = 0.08
-	floor_snap_length = 0.1
+	motion_mode = MOTION_MODE_GROUNDED
+	floor_snap_length = 0.05
+	floor_constant_speed = true
+	max_slides = 4
 	_apply_breed_mesh()
 	_apply_collision_shape()
 	if debug_enabled:
@@ -56,6 +58,17 @@ func _apply_breed_mesh() -> void:
 	var mesh_res: Mesh = load(mesh_path) as Mesh
 	if mesh_res != null:
 		model.mesh = mesh_res
+
+
+func _move_with_steps(delta: float) -> void:
+	# Split motion so we don't tunnel through colliders in a single step.
+	var motion: Vector3 = velocity * delta
+	var step_len: float = 0.06
+	var steps: int = maxi(1, ceili(motion.length() / step_len))
+	var step_v: Vector3 = motion / (float(steps) * delta)
+	for _i in steps:
+		velocity = step_v
+		move_and_slide()
 
 
 func _apply_collision_shape() -> void:
@@ -79,7 +92,7 @@ func set_target(p: Vector3) -> void:
 func _physics_process(delta: float) -> void:
 	if not has_target:
 		velocity = velocity.move_toward(Vector3.ZERO, accel * delta)
-		move_and_slide()
+		_move_with_steps(delta)
 		return
 
 	var to_target: Vector3 = target_point - global_position
@@ -90,7 +103,7 @@ func _physics_process(delta: float) -> void:
 	if dist < stop_radius:
 		has_target = false
 		velocity = velocity.move_toward(Vector3.ZERO, accel * delta)
-		move_and_slide()
+		_move_with_steps(delta)
 		if debug_enabled and debug_log_stop:
 			print("Puppy stop at dist:", dist, " pos:", global_position)
 		return
@@ -99,7 +112,7 @@ func _physics_process(delta: float) -> void:
 	var desired: Vector3 = to_target.normalized() * (speed * t)
 
 	velocity = velocity.move_toward(desired, accel * delta)
-	move_and_slide()
+	_move_with_steps(delta)
 
 	var flat_v: Vector3 = velocity
 	flat_v.y = 0.0
