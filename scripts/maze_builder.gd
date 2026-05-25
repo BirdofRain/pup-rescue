@@ -6,7 +6,7 @@ class_name MazeBuilder
 @export var wall_height: float = 0.65
 
 # Thin wall thickness relative to tile size (try 0.10–0.18)
-@export var wall_thickness_ratio: float = 0.12
+@export var wall_thickness_ratio: float = 0.14
 
 # Seals tiny pin-holes at L/T/+ corners with a flush square (not protruding caps).
 @export var corner_fill: bool = true
@@ -27,12 +27,13 @@ const CP_K: int = 75     # 'K'
 const CP_D: int = 68     # 'D'
 const CP_R: int = 82     # 'R'
 
+# Dark, high-contrast wall colors (readable on light checker floor).
 const WALL_PALETTE: Array[Color] = [
-	Color(0.92, 0.55, 0.72),  # pink
-	Color(0.55, 0.78, 0.92),  # blue
-	Color(0.62, 0.88, 0.62),  # green
-	Color(0.88, 0.78, 0.52),  # sand
-	Color(0.72, 0.62, 0.92),  # lavender
+	Color(0.52, 0.22, 0.36),  # rose
+	Color(0.22, 0.36, 0.52),  # slate blue
+	Color(0.24, 0.42, 0.28),  # forest
+	Color(0.48, 0.38, 0.22),  # brown
+	Color(0.36, 0.26, 0.48),  # plum
 ]
 
 var _wall_color: Color = WALL_PALETTE[0]
@@ -246,6 +247,9 @@ func _add_visual_segment(parent: Node3D, center: Vector3, size: Vector3) -> void
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = _wall_color
 	mat.metallic = 0.0
-	mat.roughness = 1.0
+	mat.roughness = 0.85
 	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	mat.emission_enabled = true
+	mat.emission = _wall_color.lightened(0.15)
+	mat.emission_energy_multiplier = 0.12
 	mesh.material_override = mat

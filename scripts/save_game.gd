@@ -1,5 +1,6 @@
 extends Node
-## Autoload: persistent progress and boot settings for Game scene.
+class_name GameSave
+## Autoload singleton at /root/SaveGame — use GameSave type via get_node, not bare SaveGame identifier.
 
 const SAVE_PATH := "user://save.json"
 

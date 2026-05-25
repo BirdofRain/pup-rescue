@@ -46,8 +46,9 @@ func _ready() -> void:
 	collision_mask = 1
 	motion_mode = MOTION_MODE_FLOATING
 	max_slides = 4
-	if get_node_or_null("/root/SaveGame"):
-		breed = clampi(SaveGame.breed, 0, 2) as Breed
+	var save := get_node_or_null("/root/SaveGame") as GameSave
+	if save:
+		breed = clampi(save.breed, 0, 2) as Breed
 	_apply_breed_mesh()
 	_apply_collision_shape()
 	snap_to_floor()

@@ -58,8 +58,11 @@ var restart_btn2: Button = null
 var is_tracking := false
 var active_touch_id := -1
 
+var _save: GameSave
+
 
 func _ready() -> void:
+	_save = get_node("/root/SaveGame") as GameSave
 	set_process_unhandled_input(true)
 	set_process_input(true)
 	run_seed = int(Time.get_unix_time_from_system()) ^ randi()
@@ -68,21 +71,21 @@ func _ready() -> void:
 	_apply_boot_settings()
 	_build_ui()
 	set_physics_process(true)
-	load_level(SaveGame.current_level)
+	load_level(_save.current_level)
 
 
 func _apply_boot_settings() -> void:
-	if SaveGame.boot_test_mode:
+	if _save.boot_test_mode:
 		test_mode = true
 	if puppy.has_method("set") and "breed" in puppy:
-		puppy.set("breed", clampi(SaveGame.breed, 0, 2))
+		puppy.set("breed", clampi(_save.breed, 0, 2))
 	if puppy.has_method("_apply_breed_mesh"):
 		puppy._apply_breed_mesh()
 
 
 func load_level(level_index: int) -> void:
 	current_level = level_index
-	SaveGame.current_level = level_index
+	_save.current_level = level_index
 	_clear_runtime_pickups()
 
 	if randomize_each_load:
@@ -139,7 +142,7 @@ func _update_level_label() -> void:
 	if level_label == null:
 		return
 	var name := "Test maze" if test_mode else "Level %d" % (current_level + 1)
-	level_label.text = "%s  |  Rescued: %d total" % [name, SaveGame.total_rescued]
+	level_label.text = "%s  |  Rescued: %d total" % [name, _save.total_rescued]
 
 
 func fit_floor_to_level(lines: PackedStringArray, tile_size: float, margin_tiles: float = 2.0) -> void:
@@ -151,12 +154,35 @@ func fit_floor_to_level(lines: PackedStringArray, tile_size: float, margin_tiles
 	var pm := floor_mesh.mesh as PlaneMesh
 	if pm != null:
 		pm.size = Vector2(w, h)
+	_apply_checker_floor_material(cols, rows, tile_size)
 	floor_body.global_position = center
 	var bs := floor_collision.shape as BoxShape3D
 	if bs == null:
 		bs = BoxShape3D.new()
 		floor_collision.shape = bs
 	bs.size = Vector3(w, 0.1, h)
+
+
+func _apply_checker_floor_material(cols: int, rows: int, tile_size: float) -> void:
+	var tile_px: int = 32
+	var tex_w: int = cols * tile_px
+	var tex_h: int = rows * tile_px
+	var img := Image.create(tex_w, tex_h, false, Image.FORMAT_RGB8)
+	var light := Color(0.88, 0.84, 0.78)
+	var dark := Color(0.78, 0.74, 0.68)
+	for y in tex_h:
+		for x in tex_w:
+			var tx: int = x / tile_px
+			var ty: int = y / tile_px
+			var c: Color = light if (tx + ty) % 2 == 0 else dark
+			img.set_pixel(x, y, c)
+	var tex := ImageTexture.create_from_image(img)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = tex
+	mat.uv1_scale = Vector3(1.0, 1.0, 1.0)
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	mat.roughness = 0.95
+	floor_mesh.material_override = mat
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -523,15 +549,15 @@ func _on_test_mode_toggled(on: bool) -> void:
 
 
 func _on_menu_pressed() -> void:
-	SaveGame.current_level = current_level
-	SaveGame.total_rescued += rescued_this_level
-	SaveGame.save_game()
+	_save.current_level = current_level
+	_save.total_rescued += rescued_this_level
+	_save.save_game()
 	get_tree().change_scene_to_file("res://scenes/Menu.tscn")
 
 
 func _on_next_level_pressed() -> void:
-	SaveGame.record_level_complete(rescued_this_level)
-	load_level(SaveGame.current_level)
+	_save.record_level_complete(rescued_this_level)
+	load_level(_save.current_level)
 
 
 func _show_win_panel() -> void:
@@ -542,7 +568,7 @@ func _show_win_panel() -> void:
 		if rescue_total > 0:
 			rescue_line = "\nRescued this level: %d / %d" % [rescued_this_level, rescue_total]
 		win_label.text = "Level %d complete!%s\nTotal rescued: %d" % [
-			current_level + 1, rescue_line, SaveGame.total_rescued + rescued_this_level
+			current_level + 1, rescue_line, _save.total_rescued + rescued_this_level
 		]
 	_set_hint("")
 

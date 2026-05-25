@@ -6,28 +6,31 @@ extends Control
 @onready var continue_btn: Button = $Center/Panel/VBox/ContinueBtn
 @onready var test_btn: Button = $Center/Panel/VBox/TestBtn
 
+var _save: GameSave
+
 
 func _ready() -> void:
+	_save = get_node("/root/SaveGame") as GameSave
 	breed_option.clear()
 	breed_option.add_item("Husky", 0)
 	breed_option.add_item("Labrador", 1)
 	breed_option.add_item("Pitbull", 2)
-	if SaveGame.has_save():
-		SaveGame.load_save()
-		breed_option.select(SaveGame.breed)
-	continue_btn.disabled = not SaveGame.has_save()
+	if _save.has_save():
+		_save.load_save()
+		breed_option.select(_save.breed)
+	continue_btn.disabled = not _save.has_save()
 
 
 func _on_play_pressed() -> void:
-	SaveGame.prepare_new_game(breed_option.selected)
+	_save.prepare_new_game(breed_option.selected)
 	get_tree().change_scene_to_file("res://scenes/Game.tscn")
 
 
 func _on_continue_pressed() -> void:
-	SaveGame.prepare_continue()
+	_save.prepare_continue()
 	get_tree().change_scene_to_file("res://scenes/Game.tscn")
 
 
 func _on_test_pressed() -> void:
-	SaveGame.prepare_test_maze(breed_option.selected)
+	_save.prepare_test_maze(breed_option.selected)
 	get_tree().change_scene_to_file("res://scenes/Game.tscn")
