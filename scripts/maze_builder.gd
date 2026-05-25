@@ -202,6 +202,8 @@ func _add_door_block(lines: PackedStringArray, cols: int, rows: int, parent: Nod
 
 	var body := StaticBody3D.new()
 	body.name = "Door"
+	body.collision_layer = 1
+	body.collision_mask = 0
 	body.position = center
 	parent.add_child(body)
 
@@ -231,6 +233,8 @@ func _add_door_block(lines: PackedStringArray, cols: int, rows: int, parent: Nod
 func _add_segment(parent: Node3D, center: Vector3, size: Vector3) -> void:
 	var body := StaticBody3D.new()
 	body.name = "WallSeg"
+	body.collision_layer = 1
+	body.collision_mask = 0
 	body.position = center
 	parent.add_child(body)
 

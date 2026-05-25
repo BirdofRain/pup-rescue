@@ -34,6 +34,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0.5, 2)
 [node name="ItemsRoot" type="Node3D" parent="World" unique_id=1795068465]
 
 [node name="Floor" type="StaticBody3D" parent="World" unique_id=521180378]
+collision_layer = 1
+collision_mask = 0
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="World/Floor" unique_id=502281570]
 mesh = SubResource("PlaneMesh_t88pq")

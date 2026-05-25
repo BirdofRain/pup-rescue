@@ -36,6 +36,8 @@ var has_target: bool = false
 
 
 func _ready() -> void:
+	collision_layer = 2  # player
+	collision_mask = 1   # world (walls, floor)
 	safe_margin = 0.08
 	floor_snap_length = 0.1
 	_apply_breed_mesh()
@@ -61,9 +63,10 @@ func _apply_collision_shape() -> void:
 		return
 	var capsule := CapsuleShape3D.new()
 	capsule.radius = collision_radius
-	capsule.height = collision_height
+	capsule.height = maxf(collision_height, collision_radius * 2.1)
 	collision_shape.shape = capsule
-	collision_shape.position = Vector3(0.0, collision_height * 0.5, 0.0)
+	collision_shape.disabled = false
+	collision_shape.position = Vector3(0.0, capsule.height * 0.5 + collision_radius, 0.0)
 
 
 func set_target(p: Vector3) -> void:
@@ -97,17 +100,6 @@ func _physics_process(delta: float) -> void:
 
 	velocity = velocity.move_toward(desired, accel * delta)
 	move_and_slide()
-
-	# Nudge along walls when stuck in a corner but still far from the target.
-	if has_target and dist > stop_radius * 2.0:
-		var flat_vel := velocity
-		flat_vel.y = 0.0
-		if flat_vel.length() < 0.35:
-			var slide_dir := desired - flat_vel
-			slide_dir.y = 0.0
-			if slide_dir.length() > 0.01:
-				velocity += slide_dir.normalized() * accel * delta * 0.5
-				move_and_slide()
 
 	var flat_v: Vector3 = velocity
 	flat_v.y = 0.0

@@ -11,7 +11,7 @@ extends Node3D
 @onready var floor_collision: CollisionShape3D = $World/Floor/CollisionShape3D
 
 @onready var maze_root: Node3D = $World/MazeRoot
-@onready var puppy = $World/ActorsRoot/Puppy
+@onready var puppy: CharacterBody3D = $World/ActorsRoot/Puppy
 
 const MazeBuilderScript := preload("res://scripts/maze_builder.gd")
 
@@ -44,6 +44,10 @@ var door_body: StaticBody3D = null
 var door_unlock_center: Vector3 = Vector3.ZERO
 var door_opened: bool = false
 
+const LAYER_WORLD := 1
+const LAYER_PLAYER := 2
+
+@export var pickup_radius: float = 0.55
 @export var door_unlock_radius: float = 1.1
 
 # --- UI ---
@@ -131,7 +135,9 @@ func load_level(level_index: int) -> void:
 
 
 func _physics_process(_delta: float) -> void:
+	_try_collect_key_near_puppy()
 	_try_unlock_door_near_puppy()
+	_try_reach_exit_near_puppy()
 
 
 func _find_first_camera_3d(root: Node) -> Camera3D:
@@ -290,7 +296,10 @@ func _spawn_key_if_present(info: Dictionary) -> void:
 	col.shape = shape
 	key_area.add_child(col)
 
+	key_area.collision_layer = 0
+	key_area.collision_mask = LAYER_PLAYER
 	key_area.monitoring = true
+	key_area.monitorable = false
 	key_area.body_entered.connect(_on_key_body_entered)
 
 
@@ -329,7 +338,10 @@ func _spawn_exit_if_present(info: Dictionary) -> void:
 	col.shape = shape
 	exit_area.add_child(col)
 
+	exit_area.collision_layer = 0
+	exit_area.collision_mask = LAYER_PLAYER
 	exit_area.monitoring = true
+	exit_area.monitorable = false
 	exit_area.body_entered.connect(_on_exit_body_entered)
 
 
@@ -341,14 +353,14 @@ func _spawn_door_if_present(info: Dictionary) -> void:
 
 	door_body = info.get("door_body") as StaticBody3D
 	if door_body == null or not is_instance_valid(door_body):
-		var doors := maze_root.find_children("Door", "StaticBody3D", true, false)
 		var pos: Vector3 = info.door
+		var doors := maze_root.find_children("Door", "StaticBody3D", true, false)
 		var best_d := 999999.0
 		for d in doors:
 			var sb := d as StaticBody3D
 			if sb == null:
 				continue
-			var dist := sb.global_position.distance_to(maze_root.to_global(pos))
+			var dist: float = sb.global_position.distance_to(maze_root.to_global(pos))
 			if dist < best_d:
 				best_d = dist
 				door_body = sb
@@ -360,12 +372,12 @@ func _spawn_door_if_present(info: Dictionary) -> void:
 
 	door_unlock_center = door_body.global_position
 
-	# Trigger on the actual door mesh (not the tile center) so touch unlock works.
 	door_area = Area3D.new()
 	door_area.name = "DoorArea"
-	door_area.monitoring = true
 	door_area.collision_layer = 0
-	door_area.collision_mask = 1
+	door_area.collision_mask = LAYER_PLAYER
+	door_area.monitoring = true
+	door_area.monitorable = false
 	door_body.add_child(door_area)
 
 	var col := CollisionShape3D.new()
@@ -380,21 +392,33 @@ func _spawn_door_if_present(info: Dictionary) -> void:
 func _on_key_body_entered(body: Node) -> void:
 	if body != puppy:
 		return
+	_collect_key()
+
+
+func _try_collect_key_near_puppy() -> void:
+	if has_key or key_node == null or puppy == null:
+		return
+	if not is_instance_valid(key_node):
+		return
+	var puppy_pos: Vector3 = puppy.global_position
+	var key_pos: Vector3 = key_node.global_position
+	puppy_pos.y = 0.0
+	key_pos.y = 0.0
+	if puppy_pos.distance_to(key_pos) <= pickup_radius:
+		_collect_key()
+
+
+func _collect_key() -> void:
 	if has_key:
 		return
-
 	has_key = true
 	if debug_enabled:
 		print("KEY collected!")
-
 	_set_hint("Key collected! Door is now unlockable (touch the door).")
-
-	# Remove key visual
 	if key_node:
 		key_node.queue_free()
 	key_node = null
 	key_area = null
-
 	_try_unlock_door_near_puppy()
 
 
@@ -409,10 +433,9 @@ func _try_unlock_door_near_puppy() -> void:
 		return
 	if door_body == null or not is_instance_valid(door_body):
 		return
-
-	var puppy_pos := puppy.global_position
+	var puppy_pos: Vector3 = puppy.global_position
+	var door_pos: Vector3 = door_unlock_center
 	puppy_pos.y = 0.0
-	var door_pos := door_unlock_center
 	door_pos.y = 0.0
 	if puppy_pos.distance_to(door_pos) <= door_unlock_radius:
 		_try_unlock_door()
@@ -442,12 +465,26 @@ func _open_door() -> void:
 func _on_exit_body_entered(body: Node) -> void:
 	if body != puppy:
 		return
+	_try_reach_exit()
 
-	# If you want exit to require key, keep this:
+
+func _try_reach_exit_near_puppy() -> void:
+	if exit_node == null or puppy == null:
+		return
+	if not is_instance_valid(exit_node):
+		return
+	var puppy_pos: Vector3 = puppy.global_position
+	var exit_pos: Vector3 = exit_node.global_position
+	puppy_pos.y = 0.0
+	exit_pos.y = 0.0
+	if puppy_pos.distance_to(exit_pos) <= pickup_radius:
+		_try_reach_exit()
+
+
+func _try_reach_exit() -> void:
 	if not has_key:
 		_set_hint("Need the key first.")
 		return
-
 	_show_win_panel()
 
 
