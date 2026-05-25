@@ -123,12 +123,27 @@ func generate_level(level_index: int, cells_w: int, cells_h: int, with_key_door:
 			if _tile_is_floor(door_pos.x, door_pos.y):
 				_set_tile(door_pos.x, door_pos.y, "D")
 
+	_place_rescue_markers(far1, far2, level_index)
+
 	# Convert to PackedStringArray
 	var out := PackedStringArray()
 	out.resize(_tile_h)
 	for y in range(_tile_h):
 		out[y] = _rows[y]
 	return out
+
+func _place_rescue_markers(start: Vector2i, goal: Vector2i, level_index: int) -> void:
+	var path: Array[Vector2i] = _bfs_path(start, goal)
+	if path.size() < 4:
+		return
+	var count: int = clampi(1 + level_index / 2, 1, 3)
+	for i in count:
+		var t: float = float(i + 1) / float(count + 1)
+		var idx: int = clampi(int(path.size() * t), 1, path.size() - 2)
+		var pos: Vector2i = path[idx]
+		if _get_tile(pos.x, pos.y) == ".".unicode_at(0):
+			_set_tile(pos.x, pos.y, "R")
+
 
 # ---------------- Tile helpers ----------------
 

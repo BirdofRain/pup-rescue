@@ -21,6 +21,7 @@ const CP_WALL: int = 35  # '#'
 
 @export var collision_radius: float = 0.22
 @export var collision_height: float = 0.45
+@export var model_ground_offset: float = 0.0
 
 @export var debug_enabled: bool = true
 @export var debug_log_target: bool = false
@@ -45,6 +46,8 @@ func _ready() -> void:
 	collision_mask = 1
 	motion_mode = MOTION_MODE_FLOATING
 	max_slides = 4
+	if get_node_or_null("/root/SaveGame"):
+		breed = clampi(SaveGame.breed, 0, 2) as Breed
 	_apply_breed_mesh()
 	_apply_collision_shape()
 	snap_to_floor()
@@ -96,7 +99,7 @@ func _apply_collision_shape() -> void:
 	collision_shape.disabled = false
 	collision_shape.position = Vector3(0.0, _capsule_half_height(), 0.0)
 	if model != null:
-		model.position = Vector3.ZERO
+		model.position = Vector3(0.0, model_ground_offset, 0.0)
 
 
 func set_target(p: Vector3) -> void:
@@ -217,4 +220,8 @@ func _tile_z(world_z: float) -> int:
 func _is_tile_walkable(tile_x: int, tile_z: int) -> bool:
 	if tile_x < 0 or tile_x >= _maze_cols or tile_z < 0 or tile_z >= _maze_rows:
 		return false
-	return _maze_lines[tile_z].unicode_at(tile_x) != CP_WALL
+	var cp: int = _maze_lines[tile_z].unicode_at(tile_x)
+	if cp == CP_WALL:
+		return false
+	# Locked door tile is walkable on the map but blocked dynamically.
+	return true

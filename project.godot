@@ -11,9 +11,19 @@ config_version=5
 [application]
 
 config/name="PupRescue"
-run/main_scene="uid://bnii02ts0m3mr"
+run/main_scene="uid://bqx7menu8pupr"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
+
+[autoload]
+
+SaveGame="*res://scripts/save_game.gd"
+SfxManager="*res://scripts/sfx_manager.gd"
+
+[display]
+
+window/stretch/mode="canvas_items"
+window/handheld/orientation=1
 
 [layer_names]
 

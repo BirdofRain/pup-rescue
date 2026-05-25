@@ -1,129 +1,112 @@
 # scripts/game.gd
 extends Node3D
 
-# --- Test Mode --- #
-@export var test_mode: bool = false  # micro test level
+@export var test_mode: bool = false
 @export var auto_fit_camera_on_load: bool = true
+@export var debug_enabled: bool = false
+@export var target_update_threshold: float = 0.10
+@export var randomize_each_load: bool = true
+@export var pickup_radius: float = 0.6
+@export var door_unlock_radius: float = 1.1
+@export var ui_safe_margin: int = 28
+@export var floor_collision_mask: int = 1
 
 @onready var floor_mesh: MeshInstance3D = $World/Floor/MeshInstance3D
 @onready var cam_fitter: CameraFitter = $Camera3D
 @onready var floor_body: StaticBody3D = $World/Floor
 @onready var floor_collision: CollisionShape3D = $World/Floor/CollisionShape3D
-
 @onready var maze_root: Node3D = $World/MazeRoot
 @onready var puppy: CharacterBody3D = $World/ActorsRoot/Puppy
 
 const MazeBuilderScript := preload("res://scripts/maze_builder.gd")
+const LAYER_PLAYER := 2
 
 var cam: Camera3D
 var builder: MazeBuilder
-
-@export var debug_enabled: bool = true
-@export var target_update_threshold: float = 0.10
-
-# --- Level randomness ---
-# If true, "Next Level" will generate a fresh map even for the same level index.
-@export var randomize_each_load: bool = true
 var run_seed: int = 0
-
 var current_level: int = 0
 var last_target: Vector3 = Vector3.ZERO
 var has_last_target := false
 
-# --- Key/Door/Exit runtime ---
 var has_key: bool = false
-
 var key_node: Node3D = null
 var key_area: Area3D = null
-
 var exit_node: Node3D = null
 var exit_area: Area3D = null
-
 var door_area: Area3D = null
 var door_body: StaticBody3D = null
 var door_unlock_center: Vector3 = Vector3.ZERO
 var door_opened: bool = false
 
-const LAYER_WORLD := 1
-const LAYER_PLAYER := 2
+var rescue_nodes: Array[Node3D] = []
+var rescue_total: int = 0
+var rescued_this_level: int = 0
 
-@export var pickup_radius: float = 0.55
-@export var door_unlock_radius: float = 1.1
-
-# --- UI ---
 var ui_layer: CanvasLayer = null
+var ui_root: Control = null
+var level_label: Label = null
 var hint_label: Label = null
 var win_panel: Panel = null
 var win_label: Label = null
 var restart_btn: Button = null
+var reload_btn: Button = null
+var menu_btn: Button = null
+var test_toggle: CheckButton = null
 var next_btn: Button = null
 var restart_btn2: Button = null
 
-# --- INPUT ---
 var is_tracking := false
 var active_touch_id := -1
 
-@export var floor_collision_mask: int = 1 << 0  # set this to your Floor layer
 
 func _ready() -> void:
 	set_process_unhandled_input(true)
 	set_process_input(true)
-
-	# Seed for variety
 	run_seed = int(Time.get_unix_time_from_system()) ^ randi()
-
 	cam = cam_fitter
-	if cam == null:
-		cam = get_viewport().get_camera_3d()
-	if cam == null:
-		cam = _find_first_camera_3d(get_tree().current_scene)
-
-	# Maze builder
 	builder = MazeBuilderScript.new()
-
+	_apply_boot_settings()
 	_build_ui()
 	set_physics_process(true)
-	load_level(0)
+	load_level(SaveGame.current_level)
 
-	if debug_enabled:
-		print("\n=== Game.gd _ready ===")
-		print("Scene:", get_tree().current_scene.scene_file_path)
-		print("Camera path:", (str(cam.get_path()) if cam else "NULL"))
-		print("Puppy path:", (str(puppy.get_path()) if puppy else "NULL"))
-		print("======================\n")
+
+func _apply_boot_settings() -> void:
+	if SaveGame.boot_test_mode:
+		test_mode = true
+	if puppy.has_method("set") and "breed" in puppy:
+		puppy.set("breed", clampi(SaveGame.breed, 0, 2))
+	if puppy.has_method("_apply_breed_mesh"):
+		puppy._apply_breed_mesh()
 
 
 func load_level(level_index: int) -> void:
 	current_level = level_index
-
+	SaveGame.current_level = level_index
 	_clear_runtime_pickups()
 
-	# Fresh randomness per load (including when you click Next Level)
 	if randomize_each_load:
 		run_seed = (run_seed + 1337) ^ randi()
 	else:
-		# still advance a little so Next Level isn't identical if you keep randomize_each_load off
 		run_seed = Time.get_ticks_msec()
 
 	var lines := LevelData.make(level_index, run_seed, test_mode)
-
 	var ts: float = builder.tile_size
 	fit_floor_to_level(lines, ts)
 
-	# Build maze first so we have bounds
-	var info := builder.build_from_lines(lines, $World/MazeRoot)
+	var info := builder.build_from_lines(lines, maze_root, level_index)
 
 	if auto_fit_camera_on_load and cam_fitter != null:
 		cam_fitter.set_fit_target(info["center"], info["half_extents"], test_mode)
 
-	# Reset state
 	has_key = false
 	door_opened = false
+	rescued_this_level = 0
 
-	# Spawn markers + triggers
 	_spawn_key_if_present(info)
 	_spawn_exit_if_present(info)
 	_spawn_door_if_present(info)
+	_spawn_rescues(info)
 
 	if puppy.has_method("set_maze_data"):
 		puppy.set_maze_data(lines, ts)
@@ -135,43 +118,40 @@ func load_level(level_index: int) -> void:
 	has_last_target = false
 	last_target = Vector3.ZERO
 	_hide_win_panel()
-	_set_hint("")
+	_update_level_label()
+
+	if current_level == 0 and not test_mode:
+		_set_hint("Level 1 — walk to the blue exit!")
+	elif test_mode:
+		_set_hint("Test maze — collect key, open door, reach exit.")
+	else:
+		_set_hint("Find the key, open the door, reach the exit. Rescue pups optional!")
 
 
 func _physics_process(_delta: float) -> void:
 	_try_collect_key_near_puppy()
+	_try_collect_rescues_near_puppy()
 	_try_unlock_door_near_puppy()
 	_try_reach_exit_near_puppy()
 
 
-func _find_first_camera_3d(root: Node) -> Camera3D:
-	if root is Camera3D:
-		return root as Camera3D
-	for child in root.get_children():
-		var c = _find_first_camera_3d(child)
-		if c != null:
-			return c
-	return null
+func _update_level_label() -> void:
+	if level_label == null:
+		return
+	var name := "Test maze" if test_mode else "Level %d" % (current_level + 1)
+	level_label.text = "%s  |  Rescued: %d total" % [name, SaveGame.total_rescued]
 
 
 func fit_floor_to_level(lines: PackedStringArray, tile_size: float, margin_tiles: float = 2.0) -> void:
 	var cols: int = lines[0].length()
 	var rows: int = lines.size()
-
 	var w: float = (float(cols) + margin_tiles) * tile_size
 	var h: float = (float(rows) + margin_tiles) * tile_size
-
 	var center: Vector3 = Vector3((cols - 1) * 0.5 * tile_size, 0.0, (rows - 1) * 0.5 * tile_size)
-
-	# Mesh
 	var pm := floor_mesh.mesh as PlaneMesh
 	if pm != null:
 		pm.size = Vector2(w, h)
-
-	# Center under maze
 	floor_body.global_position = center
-
-	# Collision
 	var bs := floor_collision.shape as BoxShape3D
 	if bs == null:
 		bs = BoxShape3D.new()
@@ -179,238 +159,154 @@ func fit_floor_to_level(lines: PackedStringArray, tile_size: float, margin_tiles
 	bs.size = Vector3(w, 0.1, h)
 
 
-# ------------------------------------------------------------
-# Input -> move puppy target
-# ------------------------------------------------------------
-
-func _input(event: InputEvent) -> void:
-	# Keep your debug click print
-	if debug_enabled and (event is InputEventMouseButton and event.pressed):
-		print("Click:", event.position)
-
 func _unhandled_input(event: InputEvent) -> void:
-	# --- TOUCH (Android/iOS) ---
 	if event is InputEventScreenTouch:
 		var e := event as InputEventScreenTouch
 		if e.pressed:
 			is_tracking = true
 			active_touch_id = e.index
-			handle_touch(e.position, "touch_down")
-		else:
-			# Only release the same finger that started tracking
-			if e.index == active_touch_id:
-				is_tracking = false
-				active_touch_id = -1
+			handle_touch(e.position)
+		elif e.index == active_touch_id:
+			is_tracking = false
+			active_touch_id = -1
 		return
 
 	if event is InputEventScreenDrag:
 		var e := event as InputEventScreenDrag
-		# Only drag if we are tracking AND it’s the same finger
 		if is_tracking and e.index == active_touch_id:
-			handle_touch(e.position, "touch_drag")
+			handle_touch(e.position)
 		return
 
-	# --- MOUSE (Desktop) ---
 	if event is InputEventMouseButton:
 		var e := event as InputEventMouseButton
 		if e.button_index == MOUSE_BUTTON_LEFT:
 			if e.pressed:
 				is_tracking = true
-				handle_touch(e.position, "mouse_down")
+				handle_touch(e.position)
 			else:
 				is_tracking = false
 		return
 
 	if event is InputEventMouseMotion:
 		if is_tracking and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-			handle_touch(event.position, "mouse_drag")
-		return
+			handle_touch(event.position)
 
-func handle_touch(screen_pos: Vector2, src: String) -> void:
+
+func handle_touch(screen_pos: Vector2) -> void:
 	if cam == null or puppy == null:
-		if debug_enabled:
-			print("handle_touch(", src, "): missing cam or puppy.")
 		return
-
 	var from := cam.project_ray_origin(screen_pos)
 	var dir := cam.project_ray_normal(screen_pos)
-	var to := from + dir * 500.0
-
-	var space := get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(from, to)
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 500.0)
 	query.collision_mask = floor_collision_mask
-	# Optional safety: don’t hit the puppy if it has colliders
-	if puppy is Node3D:
-		query.exclude = [ (puppy as Node3D).get_rid() ]
-
-	var result := space.intersect_ray(query)
-
+	query.exclude = [puppy.get_rid()]
+	var result := get_world_3d().direct_space_state.intersect_ray(query)
 	if result.is_empty():
-		if debug_enabled:
-			print("Ray hit NOTHING (", src, ")")
 		return
-
 	var p: Vector3 = result.position
-
 	if has_last_target and p.distance_to(last_target) < target_update_threshold:
 		return
-
 	last_target = p
 	has_last_target = true
 	puppy.call("set_target", p)
 
-# ------------------------------------------------------------
-# Key / Door / Exit runtime objects
-# ------------------------------------------------------------
+
+# --- Pickups ---
 
 func _spawn_key_if_present(info: Dictionary) -> void:
 	if not info.has("key") or info.key == null:
-		if debug_enabled:
-			print("No key in this level.")
 		return
-
-	var pos: Vector3 = info.key
-	key_node = Node3D.new()
-	key_node.name = "KeyMarker"
-	key_node.position = pos + Vector3(0.0, 0.35, 0.0)
-	maze_root.add_child(key_node)
-
-	var mesh := MeshInstance3D.new()
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = 0.12
-	cyl.bottom_radius = 0.12
-	cyl.height = 0.25
-	mesh.mesh = cyl
-	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	key_node.add_child(mesh)
-
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(1.0, 0.88, 0.15)
-	mat.metallic = 0.0
-	mat.roughness = 0.7
-	mesh.material_override = mat
-
-	key_area = Area3D.new()
-	key_area.name = "KeyArea"
-	key_node.add_child(key_area)
-
-	var col := CollisionShape3D.new()
-	var shape := SphereShape3D.new()
-	shape.radius = 0.35
-	col.shape = shape
-	key_area.add_child(col)
-
-	key_area.collision_layer = 0
-	key_area.collision_mask = LAYER_PLAYER
-	key_area.monitoring = true
-	key_area.monitorable = false
-	key_area.body_entered.connect(_on_key_body_entered)
+	key_node = _make_marker("KeyMarker", info.key + Vector3(0.0, 0.35, 0.0), Color(1.0, 0.88, 0.15), 0.12, 0.25)
+	key_area = _add_pickup_area(key_node, 0.35, _on_key_body_entered)
 
 
 func _spawn_exit_if_present(info: Dictionary) -> void:
 	if not info.has("exit") or info.exit == null:
-		if debug_enabled:
-			print("No exit in this level.")
 		return
+	exit_node = _make_marker("ExitMarker", info.exit + Vector3(0.0, 0.25, 0.0), Color(0.2, 0.6, 1.0), 0.18, 0.35, true)
+	exit_area = _add_pickup_area(exit_node, 0.45, _on_exit_body_entered)
 
-	var pos: Vector3 = info.exit
-	exit_node = Node3D.new()
-	exit_node.name = "ExitMarker"
-	exit_node.position = pos + Vector3(0.0, 0.25, 0.0)
-	maze_root.add_child(exit_node)
 
+func _spawn_rescues(info: Dictionary) -> void:
+	rescue_nodes.clear()
+	if not info.has("rescue"):
+		return
+	rescue_total = info.rescue.size()
+	for pos: Vector3 in info.rescue:
+		var node := _make_marker("RescueMarker", pos + Vector3(0.0, 0.3, 0.0), Color(1.0, 0.45, 0.75), 0.14, 0.28)
+		maze_root.add_child(node)
+		rescue_nodes.append(node)
+		_add_pickup_area(node, 0.4, _on_rescue_body_entered)
+
+
+func _make_marker(marker_name: String, pos: Vector3, color: Color, radius: float, height: float, box: bool = false) -> Node3D:
+	var node := Node3D.new()
+	node.name = marker_name
+	node.position = pos
+	maze_root.add_child(node)
 	var mesh := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = Vector3(0.35, 0.35, 0.35)
-	mesh.mesh = box
-	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	exit_node.add_child(mesh)
-
+	if box:
+		var b := BoxMesh.new()
+		b.size = Vector3(radius * 2.0, height, radius * 2.0)
+		mesh.mesh = b
+	else:
+		var c := CylinderMesh.new()
+		c.top_radius = radius
+		c.bottom_radius = radius
+		c.height = height
+		mesh.mesh = c
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.2, 0.6, 1.0)
-	mat.metallic = 0.0
-	mat.roughness = 0.7
+	mat.albedo_color = color
 	mesh.material_override = mat
+	node.add_child(mesh)
+	return node
 
-	exit_area = Area3D.new()
-	exit_area.name = "ExitArea"
-	exit_node.add_child(exit_area)
 
+func _add_pickup_area(parent: Node3D, radius: float, handler: Callable) -> Area3D:
+	var area := Area3D.new()
+	area.collision_layer = 0
+	area.collision_mask = LAYER_PLAYER
+	area.monitoring = true
+	parent.add_child(area)
 	var col := CollisionShape3D.new()
 	var shape := SphereShape3D.new()
-	shape.radius = 0.45
+	shape.radius = radius
 	col.shape = shape
-	exit_area.add_child(col)
-
-	exit_area.collision_layer = 0
-	exit_area.collision_mask = LAYER_PLAYER
-	exit_area.monitoring = true
-	exit_area.monitorable = false
-	exit_area.body_entered.connect(_on_exit_body_entered)
+	area.add_child(col)
+	area.body_entered.connect(handler)
+	return area
 
 
 func _spawn_door_if_present(info: Dictionary) -> void:
 	if not info.has("door") or info.door == null:
-		if debug_enabled:
-			print("No door in this level.")
 		return
-
 	door_body = info.get("door_body") as StaticBody3D
-	if door_body == null or not is_instance_valid(door_body):
-		var pos: Vector3 = info.door
-		var doors := maze_root.find_children("Door", "StaticBody3D", true, false)
-		var best_d := 999999.0
-		for d in doors:
-			var sb := d as StaticBody3D
-			if sb == null:
-				continue
-			var dist: float = sb.global_position.distance_to(maze_root.to_global(pos))
-			if dist < best_d:
-				best_d = dist
-				door_body = sb
-
 	if door_body == null:
-		if debug_enabled:
-			print("Door marker present but no door body found.")
 		return
-
 	door_unlock_center = door_body.global_position
 	if puppy.has_method("set_door_blocking"):
 		puppy.set_door_blocking(true, door_unlock_center)
-
 	door_area = Area3D.new()
-	door_area.name = "DoorArea"
-	door_area.collision_layer = 0
 	door_area.collision_mask = LAYER_PLAYER
 	door_area.monitoring = true
-	door_area.monitorable = false
 	door_body.add_child(door_area)
-
 	var col := CollisionShape3D.new()
 	var shape := SphereShape3D.new()
 	shape.radius = door_unlock_radius
 	col.shape = shape
 	door_area.add_child(col)
-
 	door_area.body_entered.connect(_on_door_body_entered)
 
 
 func _on_key_body_entered(body: Node) -> void:
-	if body != puppy:
-		return
-	_collect_key()
+	if body == puppy:
+		_collect_key()
 
 
 func _try_collect_key_near_puppy() -> void:
 	if has_key or key_node == null or puppy == null:
 		return
-	if not is_instance_valid(key_node):
-		return
-	var puppy_pos: Vector3 = puppy.global_position
-	var key_pos: Vector3 = key_node.global_position
-	puppy_pos.y = 0.0
-	key_pos.y = 0.0
-	if puppy_pos.distance_to(key_pos) <= pickup_radius:
+	if _near(puppy.global_position, key_node.global_position):
 		_collect_key()
 
 
@@ -418,167 +314,236 @@ func _collect_key() -> void:
 	if has_key:
 		return
 	has_key = true
-	if debug_enabled:
-		print("KEY collected!")
-	_set_hint("Key collected! Door is now unlockable (touch the door).")
+	SfxManager.play_key()
+	var burst_pos: Vector3 = key_node.global_position if key_node else puppy.global_position
+	_burst_at(burst_pos, Color(1.0, 0.9, 0.2))
 	if key_node:
 		key_node.queue_free()
 	key_node = null
 	key_area = null
+	_set_hint("Key collected! Touch the door.")
 	_try_unlock_door_near_puppy()
 
 
-func _on_door_body_entered(body: Node) -> void:
-	if body != puppy:
+func _on_rescue_body_entered(body: Node) -> void:
+	if body == puppy:
+		_try_collect_rescues_near_puppy()
+
+
+func _try_collect_rescues_near_puppy() -> void:
+	if puppy == null:
 		return
-	_try_unlock_door()
+	for node in rescue_nodes:
+		if is_instance_valid(node) and _near(puppy.global_position, node.global_position):
+			_collect_rescue_node(node)
+
+
+func _collect_rescue_node(node: Node3D) -> void:
+	if node == null or not rescue_nodes.has(node):
+		return
+	rescue_nodes.erase(node)
+	rescued_this_level += 1
+	SfxManager.play_rescue()
+	_burst_at(node.global_position, Color(1.0, 0.5, 0.8))
+	node.queue_free()
+	_update_level_label()
+	_set_hint("Rescued a pup! (%d this level)" % rescued_this_level)
+
+
+func _on_door_body_entered(body: Node) -> void:
+	if body == puppy:
+		_try_unlock_door()
 
 
 func _try_unlock_door_near_puppy() -> void:
-	if not has_key or door_opened or puppy == null:
+	if not has_key or door_opened or door_body == null or puppy == null:
 		return
-	if door_body == null or not is_instance_valid(door_body):
-		return
-	var puppy_pos: Vector3 = puppy.global_position
-	var door_pos: Vector3 = door_unlock_center
-	puppy_pos.y = 0.0
-	door_pos.y = 0.0
-	if puppy_pos.distance_to(door_pos) <= door_unlock_radius:
+	if _near(puppy.global_position, door_unlock_center):
 		_try_unlock_door()
 
 
 func _try_unlock_door() -> void:
-	if door_opened:
-		return
-	if not has_key:
-		_set_hint("Door is locked. Need the key.")
+	if door_opened or not has_key:
+		if not has_key:
+			_set_hint("Door is locked. Need the key.")
 		return
 	_open_door()
 
 
 func _open_door() -> void:
 	door_opened = true
-	_set_hint("Door opened!")
-
+	SfxManager.play_door()
+	_burst_at(door_unlock_center, Color(1.0, 0.55, 0.15))
 	if puppy.has_method("set_door_blocking"):
 		puppy.set_door_blocking(false)
-
 	if is_instance_valid(door_body):
 		door_body.queue_free()
 	door_body = null
-
 	door_area = null
+	_set_hint("Door opened!")
 
 
 func _on_exit_body_entered(body: Node) -> void:
-	if body != puppy:
-		return
-	_try_reach_exit()
+	if body == puppy:
+		_try_reach_exit()
 
 
 func _try_reach_exit_near_puppy() -> void:
 	if exit_node == null or puppy == null:
 		return
-	if not is_instance_valid(exit_node):
-		return
-	var puppy_pos: Vector3 = puppy.global_position
-	var exit_pos: Vector3 = exit_node.global_position
-	puppy_pos.y = 0.0
-	exit_pos.y = 0.0
-	if puppy_pos.distance_to(exit_pos) <= pickup_radius:
+	if _near(puppy.global_position, exit_node.global_position):
 		_try_reach_exit()
 
 
 func _try_reach_exit() -> void:
-	if not has_key:
+	if current_level > 0 and not has_key:
 		_set_hint("Need the key first.")
 		return
+	_complete_level()
+
+
+func _complete_level() -> void:
+	SfxManager.play_win()
+	_burst_at(exit_node.global_position if exit_node else puppy.global_position, Color(0.3, 0.7, 1.0))
 	_show_win_panel()
 
 
-# ------------------------------------------------------------
-# UI
-# ------------------------------------------------------------
+func _near(a: Vector3, b: Vector3) -> bool:
+	var pa := a
+	var pb := b
+	pa.y = 0.0
+	pb.y = 0.0
+	return pa.distance_to(pb) <= pickup_radius
+
+
+func _burst_at(world_pos: Vector3, color: Color) -> void:
+	var p := CPUParticles3D.new()
+	p.one_shot = true
+	p.emitting = true
+	p.amount = 14
+	p.lifetime = 0.45
+	p.explosiveness = 1.0
+	p.direction = Vector3(0.0, 1.0, 0.0)
+	p.spread = 75.0
+	p.initial_velocity_min = 1.5
+	p.initial_velocity_max = 3.5
+	p.gravity = Vector3(0.0, -4.0, 0.0)
+	p.scale_amount_min = 0.08
+	p.scale_amount_max = 0.14
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.emission_enabled = true
+	mat.emission = color
+	mat.emission_energy_multiplier = 0.6
+	p.material_override = mat
+	maze_root.add_child(p)
+	p.global_position = world_pos
+	get_tree().create_timer(0.8).timeout.connect(p.queue_free)
+
+
+# --- UI ---
 
 func _build_ui() -> void:
 	ui_layer = CanvasLayer.new()
-	ui_layer.name = "UI"
 	add_child(ui_layer)
+	ui_root = Control.new()
+	ui_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ui_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_layer.add_child(ui_root)
 
-	var root := Control.new()
-	root.name = "Root"
-	root.anchor_left = 0
-	root.anchor_top = 0
-	root.anchor_right = 1
-	root.anchor_bottom = 1
-	root.offset_left = 0
-	root.offset_top = 0
-	root.offset_right = 0
-	root.offset_bottom = 0
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ui_layer.add_child(root)
+	var m := ui_safe_margin
+	var top_bar := HBoxContainer.new()
+	top_bar.position = Vector2(m, m)
+	top_bar.add_theme_constant_override("separation", 10)
+	ui_root.add_child(top_bar)
 
-	# Restart button
-	restart_btn = Button.new()
-	restart_btn.text = "Restart"
-	restart_btn.position = Vector2(14, 14)
-	restart_btn.size = Vector2(120, 36)
-	restart_btn.pressed.connect(func(): load_level(current_level))
-	root.add_child(restart_btn)
+	menu_btn = _big_button("Menu", _on_menu_pressed)
+	top_bar.add_child(menu_btn)
+	restart_btn = _big_button("Restart", func(): load_level(current_level))
+	top_bar.add_child(restart_btn)
+	reload_btn = _big_button("Reload", func(): load_level(current_level))
+	top_bar.add_child(reload_btn)
 
-	# Hint label
+	test_toggle = CheckButton.new()
+	test_toggle.text = "Test maze"
+	test_toggle.button_pressed = test_mode
+	test_toggle.toggled.connect(_on_test_mode_toggled)
+	top_bar.add_child(test_toggle)
+
+	level_label = Label.new()
+	level_label.position = Vector2(m, m + 52)
+	level_label.size = Vector2(700, 24)
+	ui_root.add_child(level_label)
+
 	hint_label = Label.new()
-	hint_label.text = ""
-	hint_label.position = Vector2(160, 18)
-	hint_label.size = Vector2(800, 28)
-	root.add_child(hint_label)
+	hint_label.position = Vector2(m, m + 78)
+	hint_label.size = Vector2(900, 28)
+	ui_root.add_child(hint_label)
 
-	# Win panel
 	win_panel = Panel.new()
 	win_panel.visible = false
-	win_panel.size = Vector2(420, 200)
-	win_panel.position = Vector2(0, 0)
-	root.add_child(win_panel)
+	win_panel.set_anchors_preset(Control.PRESET_CENTER)
+	win_panel.offset_left = -220
+	win_panel.offset_top = -120
+	win_panel.offset_right = 220
+	win_panel.offset_bottom = 120
+	ui_root.add_child(win_panel)
 
-	win_panel.anchor_left = 0.5
-	win_panel.anchor_top = 0.5
-	win_panel.anchor_right = 0.5
-	win_panel.anchor_bottom = 0.5
-	win_panel.offset_left = -210
-	win_panel.offset_top = -100
-	win_panel.offset_right = 210
-	win_panel.offset_bottom = 100
+	var win_v := VBoxContainer.new()
+	win_v.position = Vector2(20, 16)
+	win_v.add_theme_constant_override("separation", 12)
+	win_panel.add_child(win_v)
 
 	win_label = Label.new()
-	win_label.text = "You made it!"
-	win_label.position = Vector2(20, 20)
-	win_label.size = Vector2(380, 40)
-	win_panel.add_child(win_label)
+	win_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	win_label.custom_minimum_size = Vector2(380, 80)
+	win_v.add_child(win_label)
 
-	next_btn = Button.new()
-	next_btn.text = "Next Level"
-	next_btn.position = Vector2(20, 90)
-	next_btn.size = Vector2(180, 40)
-	next_btn.pressed.connect(func():
-		load_level(current_level + 1)
-	)
-	win_panel.add_child(next_btn)
+	var win_btns := HBoxContainer.new()
+	win_btns.add_theme_constant_override("separation", 12)
+	win_v.add_child(win_btns)
 
-	restart_btn2 = Button.new()
-	restart_btn2.text = "Restart Level"
-	restart_btn2.position = Vector2(220, 90)
-	restart_btn2.size = Vector2(180, 40)
-	restart_btn2.pressed.connect(func():
-		load_level(current_level)
-	)
-	win_panel.add_child(restart_btn2)
+	next_btn = _big_button("Next Level", _on_next_level_pressed)
+	win_btns.add_child(next_btn)
+	restart_btn2 = _big_button("Restart", func(): load_level(current_level))
+	win_btns.add_child(restart_btn2)
+
+
+func _big_button(text: String, callback: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(120, 44)
+	b.pressed.connect(callback)
+	return b
+
+
+func _on_test_mode_toggled(on: bool) -> void:
+	test_mode = on
+	load_level(current_level)
+
+
+func _on_menu_pressed() -> void:
+	SaveGame.current_level = current_level
+	SaveGame.total_rescued += rescued_this_level
+	SaveGame.save_game()
+	get_tree().change_scene_to_file("res://scenes/Menu.tscn")
+
+
+func _on_next_level_pressed() -> void:
+	SaveGame.record_level_complete(rescued_this_level)
+	load_level(SaveGame.current_level)
 
 
 func _show_win_panel() -> void:
 	if win_panel:
 		win_panel.visible = true
 	if win_label:
-		win_label.text = "Level complete!\nNext level or restart?"
+		var rescue_line := ""
+		if rescue_total > 0:
+			rescue_line = "\nRescued this level: %d / %d" % [rescued_this_level, rescue_total]
+		win_label.text = "Level %d complete!%s\nTotal rescued: %d" % [
+			current_level + 1, rescue_line, SaveGame.total_rescued + rescued_this_level
+		]
 	_set_hint("")
 
 
@@ -592,31 +557,28 @@ func _set_hint(msg: String) -> void:
 		hint_label.text = msg
 
 
-# ------------------------------------------------------------
-# Cleanup
-# ------------------------------------------------------------
-
 func _clear_runtime_pickups() -> void:
+	for node in rescue_nodes:
+		if is_instance_valid(node):
+			node.queue_free()
+	rescue_nodes.clear()
+	rescue_total = 0
+
 	if key_node:
 		key_node.queue_free()
 	key_node = null
 	key_area = null
-
 	if exit_node:
 		exit_node.queue_free()
 	exit_node = null
 	exit_area = null
-
 	if door_area and is_instance_valid(door_area):
 		door_area.queue_free()
 	door_area = null
-
 	door_body = null
 	door_unlock_center = Vector3.ZERO
 	has_key = false
 	door_opened = false
-
 	if puppy != null and puppy.has_method("set_door_blocking"):
 		puppy.set_door_blocking(false)
-
 	_hide_win_panel()

@@ -8,7 +8,7 @@ static func make_micro_test_level() -> PackedStringArray:
 		"###########",
 		"#S   #   E#",
 		"# ## # ####",
-		"# K  D    #",
+		"# K  D  R #",
 		"###########",
 	]
 	return arr
@@ -22,12 +22,13 @@ static func make(level_index: int, run_seed: int = 0, use_micro_test: bool = fal
 
 	var gen := LevelGenerator.new()
 
-	# Size grows with level
-	var w := clampi(9 + level_index * 2, 9, 19)
-	var h := clampi(7 + level_index * 2, 7, 17)
+	# Level 0 = small tutorial maze; later levels grow in size.
+	var w := 7 if level_index == 0 else clampi(9 + level_index * 2, 9, 19)
+	var h := 7 if level_index == 0 else clampi(7 + level_index * 2, 7, 17)
+	var with_key_door := level_index > 0
 
 	gen.set_seed(_mix_seed(level_index, run_seed))
-	return gen.generate_level(level_index, w, h, true)
+	return gen.generate_level(level_index, w, h, with_key_door)
 
 
 static func _mix_seed(level_index: int, run_seed: int) -> int:

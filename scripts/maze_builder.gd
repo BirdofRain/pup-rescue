@@ -27,12 +27,23 @@ const CP_K: int = 75     # 'K'
 const CP_D: int = 68     # 'D'
 const CP_R: int = 82     # 'R'
 
+const WALL_PALETTE: Array[Color] = [
+	Color(0.92, 0.55, 0.72),  # pink
+	Color(0.55, 0.78, 0.92),  # blue
+	Color(0.62, 0.88, 0.62),  # green
+	Color(0.88, 0.78, 0.52),  # sand
+	Color(0.72, 0.62, 0.92),  # lavender
+]
+
+var _wall_color: Color = WALL_PALETTE[0]
+
 
 func clear_children(root: Node) -> void:
 	for c in root.get_children():
 		c.queue_free()
 
-func build_from_lines(lines: PackedStringArray, maze_root: Node3D) -> Dictionary:
+func build_from_lines(lines: PackedStringArray, maze_root: Node3D, level_index: int = 0) -> Dictionary:
+	_wall_color = WALL_PALETTE[level_index % WALL_PALETTE.size()]
 	var info := {
 		"start": Vector3.ZERO,
 		"exit": null,
@@ -71,7 +82,6 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D) -> Dictionary
 	maze_root.add_child(walls)
 
 	_build_thin_boundary_walls(lines, cols, rows, walls)
-	_build_wall_collision_fill(lines, cols, rows, walls)
 
 	# Add the door physical blocker (if present)
 	if info.door != null:
@@ -148,19 +158,6 @@ func _build_thin_boundary_walls(lines: PackedStringArray, cols: int, rows: int, 
 
 func _mark_endpoint(d: Dictionary, vx: int, vz: int) -> void:
 	d["%d,%d" % [vx, vz]] = true
-
-
-# Invisible full-tile colliders so wall interiors are not hollow (no visible mesh).
-func _build_wall_collision_fill(lines: PackedStringArray, cols: int, rows: int, walls_root: Node3D) -> void:
-	var y_center: float = wall_height * 0.5
-	var tile := Vector3(tile_size, wall_height, tile_size)
-
-	for z in range(rows):
-		for x in range(cols):
-			if not _is_wall(lines, x, z, cols, rows):
-				continue
-			var center := Vector3(float(x) * tile_size, y_center, float(z) * tile_size)
-			_add_collision_tile(walls_root, center, tile)
 
 
 # -------------------- door --------------------
@@ -247,23 +244,8 @@ func _add_visual_segment(parent: Node3D, center: Vector3, size: Vector3) -> void
 	vis.add_child(mesh)
 
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.92, 0.92, 0.92)
+	mat.albedo_color = _wall_color
 	mat.metallic = 0.0
 	mat.roughness = 1.0
 	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 	mesh.material_override = mat
-
-
-func _add_collision_tile(parent: Node3D, center: Vector3, size: Vector3) -> void:
-	var body := StaticBody3D.new()
-	body.name = "WallCol"
-	body.collision_layer = 1
-	body.collision_mask = 0
-	body.position = center
-	parent.add_child(body)
-
-	var col := CollisionShape3D.new()
-	var shape := BoxShape3D.new()
-	shape.size = size
-	col.shape = shape
-	body.add_child(col)
