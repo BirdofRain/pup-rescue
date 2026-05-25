@@ -38,12 +38,11 @@ var has_target: bool = false
 func _ready() -> void:
 	collision_layer = 2  # player
 	collision_mask = 1   # world (walls, floor)
-	motion_mode = MOTION_MODE_GROUNDED
-	floor_snap_length = 0.05
-	floor_constant_speed = true
+	motion_mode = MOTION_MODE_FLOATING
 	max_slides = 4
 	_apply_breed_mesh()
 	_apply_collision_shape()
+	snap_to_floor()
 	if debug_enabled:
 		print("\n=== Puppy Controller _ready ===")
 		print("Puppy node path:", get_path())
@@ -68,7 +67,22 @@ func _move_with_steps(delta: float) -> void:
 	var step_v: Vector3 = motion / (float(steps) * delta)
 	for _i in steps:
 		velocity = step_v
+		velocity.y = 0.0
 		move_and_slide()
+	global_position.y = _capsule_half_height()
+	velocity.y = 0.0
+
+
+func _capsule_half_height() -> float:
+	var h: float = maxf(collision_height, collision_radius * 2.1)
+	return collision_radius + h * 0.5
+
+
+func snap_to_floor() -> void:
+	var pos := global_position
+	pos.y = _capsule_half_height()
+	global_position = pos
+	velocity.y = 0.0
 
 
 func _apply_collision_shape() -> void:
@@ -79,7 +93,9 @@ func _apply_collision_shape() -> void:
 	capsule.height = maxf(collision_height, collision_radius * 2.1)
 	collision_shape.shape = capsule
 	collision_shape.disabled = false
-	collision_shape.position = Vector3(0.0, capsule.height * 0.5 + collision_radius, 0.0)
+	collision_shape.position = Vector3(0.0, _capsule_half_height(), 0.0)
+	if model != null:
+		model.position = Vector3(0.0, 0.0, 0.0)
 
 
 func set_target(p: Vector3) -> void:
@@ -106,6 +122,7 @@ func _physics_process(delta: float) -> void:
 		_move_with_steps(delta)
 		if debug_enabled and debug_log_stop:
 			print("Puppy stop at dist:", dist, " pos:", global_position)
+		global_position.y = _capsule_half_height()
 		return
 
 	var t: float = clampf(dist / slow_radius, min_speed_factor, 1.0)

@@ -70,7 +70,8 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D) -> Dictionary
 	walls.name = "Walls"
 	maze_root.add_child(walls)
 
-	_build_solid_wall_tiles(lines, cols, rows, walls)
+	_build_thin_boundary_walls(lines, cols, rows, walls)
+	_build_wall_collision_fill(lines, cols, rows, walls)
 
 	# Add the door physical blocker (if present)
 	if info.door != null:
@@ -93,9 +94,64 @@ func _is_walkable(lines: PackedStringArray, x: int, z: int, cols: int, rows: int
 		return false
 	return (lines[z].unicode_at(x) != CP_WALL)
 
-# One solid collider per wall tile. Thin edge-only walls left hollow interiors
-# that the puppy could walk through.
-func _build_solid_wall_tiles(lines: PackedStringArray, cols: int, rows: int, walls_root: Node3D) -> void:
+func _build_thin_boundary_walls(lines: PackedStringArray, cols: int, rows: int, walls_root: Node3D) -> void:
+	var t: float = tile_size * wall_thickness_ratio
+	var y_center: float = wall_height * 0.5
+	var vert_endpoints: Dictionary = {}
+	var horiz_endpoints: Dictionary = {}
+
+	for z in range(rows):
+		for x in range(cols):
+			if not _is_wall(lines, x, z, cols, rows):
+				continue
+
+			if not _is_wall(lines, x - 1, z, cols, rows):
+				var cx := (float(x) - 0.5) * tile_size
+				var cz := float(z) * tile_size
+				_add_visual_segment(walls_root, Vector3(cx, y_center, cz), Vector3(t, wall_height, tile_size))
+				_mark_endpoint(vert_endpoints, x, z)
+				_mark_endpoint(vert_endpoints, x, z + 1)
+
+			if not _is_wall(lines, x + 1, z, cols, rows):
+				var cx := (float(x) + 0.5) * tile_size
+				var cz := float(z) * tile_size
+				_add_visual_segment(walls_root, Vector3(cx, y_center, cz), Vector3(t, wall_height, tile_size))
+				_mark_endpoint(vert_endpoints, x + 1, z)
+				_mark_endpoint(vert_endpoints, x + 1, z + 1)
+
+			if not _is_wall(lines, x, z - 1, cols, rows):
+				var cx := float(x) * tile_size
+				var cz := (float(z) - 0.5) * tile_size
+				_add_visual_segment(walls_root, Vector3(cx, y_center, cz), Vector3(tile_size, wall_height, t))
+				_mark_endpoint(horiz_endpoints, x, z)
+				_mark_endpoint(horiz_endpoints, x + 1, z)
+
+			if not _is_wall(lines, x, z + 1, cols, rows):
+				var cx := float(x) * tile_size
+				var cz := (float(z) + 0.5) * tile_size
+				_add_visual_segment(walls_root, Vector3(cx, y_center, cz), Vector3(tile_size, wall_height, t))
+				_mark_endpoint(horiz_endpoints, x, z + 1)
+				_mark_endpoint(horiz_endpoints, x + 1, z + 1)
+
+	if corner_fill:
+		var s: float = t + corner_fill_epsilon
+		for key: String in vert_endpoints.keys():
+			if not horiz_endpoints.has(key):
+				continue
+			var parts: PackedStringArray = key.split(",")
+			var vx: int = int(parts[0])
+			var vz: int = int(parts[1])
+			var wx: float = (float(vx) - 0.5) * tile_size
+			var wz: float = (float(vz) - 0.5) * tile_size
+			_add_visual_segment(walls_root, Vector3(wx, y_center, wz), Vector3(s, wall_height, s))
+
+
+func _mark_endpoint(d: Dictionary, vx: int, vz: int) -> void:
+	d["%d,%d" % [vx, vz]] = true
+
+
+# Invisible full-tile colliders so wall interiors are not hollow (no visible mesh).
+func _build_wall_collision_fill(lines: PackedStringArray, cols: int, rows: int, walls_root: Node3D) -> void:
 	var y_center: float = wall_height * 0.5
 	var tile := Vector3(tile_size, wall_height, tile_size)
 
@@ -104,7 +160,8 @@ func _build_solid_wall_tiles(lines: PackedStringArray, cols: int, rows: int, wal
 			if not _is_wall(lines, x, z, cols, rows):
 				continue
 			var center := Vector3(float(x) * tile_size, y_center, float(z) * tile_size)
-			_add_segment(walls_root, center, tile)
+			_add_collision_tile(walls_root, center, tile)
+
 
 # -------------------- door --------------------
 
@@ -176,20 +233,18 @@ func _add_door_block(lines: PackedStringArray, cols: int, rows: int, parent: Nod
 
 # -------------------- segment --------------------
 
-func _add_segment(parent: Node3D, center: Vector3, size: Vector3) -> void:
-	var body := StaticBody3D.new()
-	body.name = "WallSeg"
-	body.collision_layer = 1
-	body.collision_mask = 0
-	body.position = center
-	parent.add_child(body)
+func _add_visual_segment(parent: Node3D, center: Vector3, size: Vector3) -> void:
+	var vis := Node3D.new()
+	vis.name = "WallVis"
+	vis.position = center
+	parent.add_child(vis)
 
 	var mesh := MeshInstance3D.new()
 	var box := BoxMesh.new()
 	box.size = size
 	mesh.mesh = box
 	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	body.add_child(mesh)
+	vis.add_child(mesh)
 
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.92, 0.92, 0.92)
@@ -197,6 +252,15 @@ func _add_segment(parent: Node3D, center: Vector3, size: Vector3) -> void:
 	mat.roughness = 1.0
 	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 	mesh.material_override = mat
+
+
+func _add_collision_tile(parent: Node3D, center: Vector3, size: Vector3) -> void:
+	var body := StaticBody3D.new()
+	body.name = "WallCol"
+	body.collision_layer = 1
+	body.collision_mask = 0
+	body.position = center
+	parent.add_child(body)
 
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()

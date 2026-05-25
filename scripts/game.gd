@@ -126,7 +126,9 @@ func load_level(level_index: int) -> void:
 	_spawn_door_if_present(info)
 
 	# Place puppy at start
-	puppy.global_position = info["start"] + Vector3(0.0, 0.5, 0.0)
+	puppy.global_position = info["start"]
+	if puppy.has_method("snap_to_floor"):
+		puppy.call("snap_to_floor")
 
 	has_last_target = false
 	last_target = Vector3.ZERO
