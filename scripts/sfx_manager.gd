@@ -2,6 +2,7 @@ extends Node
 ## Autoload: lightweight procedural beeps (no audio files required).
 
 var _player: AudioStreamPlayer
+var _win_playing: bool = false
 
 
 func _ready() -> void:
@@ -31,10 +32,25 @@ func play_rescue() -> void:
 	play_tone(740.0, 0.06, -8.0)
 
 
+func play_fruit() -> void:
+	play_tone(620.0, 0.08, -6.0)
+	var t := get_tree().create_timer(0.06)
+	t.timeout.connect(func(): play_tone(980.0, 0.07, -7.0), CONNECT_ONE_SHOT)
+
+
 func play_win() -> void:
+	if _win_playing:
+		return
+	_win_playing = true
 	play_tone(660.0, 0.12, -5.0)
-	var t := get_tree().create_timer(0.1)
-	t.timeout.connect(func(): play_tone(990.0, 0.18, -4.0))
+	var t := get_tree().create_timer(0.12)
+	t.timeout.connect(_play_win_second_tone, CONNECT_ONE_SHOT)
+
+
+func _play_win_second_tone() -> void:
+	play_tone(990.0, 0.18, -4.0)
+	var done := get_tree().create_timer(0.2)
+	done.timeout.connect(func(): _win_playing = false, CONNECT_ONE_SHOT)
 
 
 func _make_tone(freq_hz: float, duration: float) -> AudioStreamWAV:

@@ -26,6 +26,9 @@ const CP_E: int = 69     # 'E'
 const CP_K: int = 75     # 'K'
 const CP_D: int = 68     # 'D'
 const CP_R: int = 82     # 'R'
+const CP_P: int = 80     # 'P'
+const CP_G: int = 71     # 'G'
+const CP_F: int = 70     # 'F'
 
 # Dark, high-contrast wall colors (readable on light checker floor).
 const WALL_PALETTE: Array[Color] = [
@@ -50,7 +53,10 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D, level_index: 
 		"exit": null,
 		"key": null,
 		"door": null,
-		"rescue": []
+		"rescue": [],
+		"pen_gate": null,
+		"pen_cells": [],
+		"fruit": [],
 	}
 
 	clear_children(maze_root)
@@ -75,7 +81,18 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D, level_index: 
 				CP_K: info.key = pos
 				CP_D: info.door = pos
 				CP_R: info.rescue.append(pos)
+				CP_P: info.pen_cells.append(pos)
+				CP_G: info.pen_gate = pos
+				CP_F: info.fruit.append(pos)
 				_: pass
+
+	if info.pen_cells.size() > 0:
+		var sum := Vector3.ZERO
+		for p: Vector3 in info.pen_cells:
+			sum += p
+		info["pen_center"] = sum / float(info.pen_cells.size())
+	elif info.pen_gate is Vector3:
+		info["pen_center"] = info.pen_gate
 
 	# Build thin boundary walls
 	var walls := Node3D.new()
@@ -84,11 +101,22 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D, level_index: 
 
 	_build_thin_boundary_walls(lines, cols, rows, walls)
 
+	_build_pen_floors(lines, cols, rows, maze_root)
+
 	# Add the door physical blocker (if present)
 	if info.door != null:
 		info["door_body"] = _add_door_block(
 			lines, cols, rows, walls,
-			Vector2i(int(info.door.x / tile_size), int(info.door.z / tile_size))
+			Vector2i(int(info.door.x / tile_size), int(info.door.z / tile_size)),
+			Color(1.0, 0.45, 0.1)
+		)
+
+	if info.pen_gate != null:
+		info["pen_gate_body"] = _add_door_block(
+			lines, cols, rows, walls,
+			Vector2i(int(info.pen_gate.x / tile_size), int(info.pen_gate.z / tile_size)),
+			Color(1.0, 0.55, 0.75),
+			"PenGate"
 		)
 
 	return info
@@ -163,7 +191,36 @@ func _mark_endpoint(d: Dictionary, vx: int, vz: int) -> void:
 
 # -------------------- door --------------------
 
-func _add_door_block(lines: PackedStringArray, cols: int, rows: int, parent: Node3D, door_cell: Vector2i) -> StaticBody3D:
+func _build_pen_floors(lines: PackedStringArray, cols: int, rows: int, maze_root: Node3D) -> void:
+	var pen_root := Node3D.new()
+	pen_root.name = "PenFloors"
+	maze_root.add_child(pen_root)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 0.82, 0.9)
+	mat.roughness = 0.9
+	for z in range(rows):
+		for x in range(cols):
+			if lines[z].unicode_at(x) != CP_P:
+				continue
+			var plane := MeshInstance3D.new()
+			var pm := PlaneMesh.new()
+			pm.size = Vector2(tile_size * 0.92, tile_size * 0.92)
+			plane.mesh = pm
+			plane.material_override = mat
+			plane.position = Vector3(float(x) * tile_size, 0.02, float(z) * tile_size)
+			plane.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+			pen_root.add_child(plane)
+
+
+func _add_door_block(
+	lines: PackedStringArray,
+	cols: int,
+	rows: int,
+	parent: Node3D,
+	door_cell: Vector2i,
+	tint: Color = Color(1.0, 0.45, 0.1),
+	body_name: String = "Door"
+) -> StaticBody3D:
 	var x := door_cell.x
 	var z := door_cell.y
 
@@ -202,7 +259,7 @@ func _add_door_block(lines: PackedStringArray, cols: int, rows: int, parent: Nod
 		size = Vector3(open_w, door_h, door_t)
 
 	var body := StaticBody3D.new()
-	body.name = "Door"
+	body.name = body_name
 	body.collision_layer = 1
 	body.collision_mask = 0
 	body.position = center
@@ -216,7 +273,7 @@ func _add_door_block(lines: PackedStringArray, cols: int, rows: int, parent: Nod
 	body.add_child(mesh)
 
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(1.0, 0.45, 0.1)
+	mat.albedo_color = tint
 	mat.metallic = 0.0
 	mat.roughness = 0.9
 	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED

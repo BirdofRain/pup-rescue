@@ -8,8 +8,6 @@ const BREED_MESH_PATHS: Dictionary = {
 	Breed.LABRADOR: "res://assets/VoxelLabrador.obj",
 	Breed.PITBULL: "res://assets/VoxelPitbull.obj",
 }
-const CP_WALL: int = 35  # '#'
-
 @export var breed: Breed = Breed.HUSKY
 @export var speed: float = 6.0
 @export var accel: float = 20.0
@@ -33,12 +31,7 @@ const CP_WALL: int = 35  # '#'
 var target_point: Vector3 = Vector3.ZERO
 var has_target: bool = false
 
-var _maze_lines: PackedStringArray = PackedStringArray()
-var _tile_size: float = 1.0
-var _maze_cols: int = 0
-var _maze_rows: int = 0
-var _door_blocks: bool = false
-var _door_block_pos: Vector3 = Vector3.ZERO
+var _nav: MazeNav
 
 
 func _ready() -> void:
@@ -55,19 +48,27 @@ func _ready() -> void:
 
 
 func set_maze_data(lines: PackedStringArray, tile_size: float) -> void:
-	_maze_lines = lines
-	_tile_size = tile_size
-	if lines.is_empty():
-		_maze_cols = 0
-		_maze_rows = 0
-	else:
-		_maze_cols = lines[0].length()
-		_maze_rows = lines.size()
+	_nav = MazeNav.new(lines, tile_size, collision_radius)
+
+
+func get_nav() -> MazeNav:
+	return _nav
+
+
+func set_dynamic_blockers(positions: Array) -> void:
+	if _nav == null:
+		return
+	_nav.clear_blockers()
+	for p in positions:
+		if p is Vector3:
+			_nav.add_blocker(p)
 
 
 func set_door_blocking(blocked: bool, world_pos: Vector3 = Vector3.ZERO) -> void:
-	_door_blocks = blocked
-	_door_block_pos = world_pos
+	if blocked:
+		set_dynamic_blockers([world_pos])
+	else:
+		set_dynamic_blockers([])
 
 
 func _apply_breed_mesh() -> void:
@@ -87,7 +88,10 @@ func _capsule_half_height() -> float:
 func snap_to_floor() -> void:
 	var pos := global_position
 	pos.y = _capsule_half_height()
-	global_position = _clamp_to_walkable(pos)
+	if _nav != null:
+		global_position = _nav.clamp_to_walkable(pos, _capsule_half_height())
+	else:
+		global_position = pos
 
 
 func _apply_collision_shape() -> void:
@@ -132,7 +136,9 @@ func _physics_process(delta: float) -> void:
 
 	var motion: Vector3 = velocity * delta
 	motion.y = 0.0
-	var next_pos: Vector3 = _resolve_motion(global_position, global_position + motion)
+	var next_pos: Vector3 = global_position + motion
+	if _nav != null:
+		next_pos = _nav.resolve_motion(global_position, next_pos, _capsule_half_height())
 	next_pos.y = _capsule_half_height()
 	global_position = next_pos
 
@@ -146,83 +152,3 @@ func _physics_process(delta: float) -> void:
 		global_basis = global_basis.slerp(desired_basis, rotate_speed * delta)
 
 
-func _resolve_motion(from: Vector3, to: Vector3) -> Vector3:
-	var feet_from := from
-	feet_from.y = _capsule_half_height()
-	var feet_to := to
-	feet_to.y = _capsule_half_height()
-
-	if _is_position_walkable(feet_to):
-		return feet_to
-
-	var slide_x := Vector3(feet_to.x, feet_from.y, feet_from.z)
-	if _is_position_walkable(slide_x):
-		return slide_x
-
-	var slide_z := Vector3(feet_from.x, feet_from.y, feet_to.z)
-	if _is_position_walkable(slide_z):
-		return slide_z
-
-	return feet_from
-
-
-func _clamp_to_walkable(pos: Vector3) -> Vector3:
-	if _is_position_walkable(pos):
-		return pos
-	# Nudge toward nearest walkable tile center if spawned slightly off.
-	var tx: int = _tile_x(pos.x)
-	var tz: int = _tile_z(pos.z)
-	for radius in range(1, 4):
-		for dz in range(-radius, radius + 1):
-			for dx in range(-radius, radius + 1):
-				var nx: int = tx + dx
-				var nz: int = tz + dz
-				if _is_tile_walkable(nx, nz):
-					var p := pos
-					p.x = float(nx) * _tile_size
-					p.z = float(nz) * _tile_size
-					p.y = _capsule_half_height()
-					return p
-	return pos
-
-
-func _is_position_walkable(pos: Vector3) -> bool:
-	if _maze_lines.is_empty():
-		return true
-
-	var r: float = collision_radius * 0.85
-	var samples: Array[Vector3] = [
-		Vector3.ZERO,
-		Vector3(r, 0.0, 0.0),
-		Vector3(-r, 0.0, 0.0),
-		Vector3(0.0, 0.0, r),
-		Vector3(0.0, 0.0, -r),
-	]
-	for offset: Vector3 in samples:
-		if not _is_world_point_walkable(pos + offset):
-			return false
-	return true
-
-
-func _is_world_point_walkable(world_pos: Vector3) -> bool:
-	if _door_blocks and _door_block_pos.distance_to(world_pos) < collision_radius + 0.15:
-		return false
-	return _is_tile_walkable(_tile_x(world_pos.x), _tile_z(world_pos.z))
-
-
-func _tile_x(world_x: float) -> int:
-	return int(round(world_x / _tile_size))
-
-
-func _tile_z(world_z: float) -> int:
-	return int(round(world_z / _tile_size))
-
-
-func _is_tile_walkable(tile_x: int, tile_z: int) -> bool:
-	if tile_x < 0 or tile_x >= _maze_cols or tile_z < 0 or tile_z >= _maze_rows:
-		return false
-	var cp: int = _maze_lines[tile_z].unicode_at(tile_x)
-	if cp == CP_WALL:
-		return false
-	# Locked door tile is walkable on the map but blocked dynamically.
-	return true

@@ -8,6 +8,9 @@ extends Node3D
 @export var randomize_each_load: bool = true
 @export var pickup_radius: float = 0.6
 @export var door_unlock_radius: float = 1.1
+@export var fruit_speed_multiplier: float = 1.55
+@export var fruit_boost_duration: float = 30.0
+@export var fruit_convert_max: int = 3
 @export var ui_safe_margin: int = 28
 @export var floor_collision_mask: int = 1
 
@@ -38,13 +41,27 @@ var door_body: StaticBody3D = null
 var door_unlock_center: Vector3 = Vector3.ZERO
 var door_opened: bool = false
 
+var has_pen: bool = false
+var pen_gate_body: StaticBody3D = null
+var pen_gate_center: Vector3 = Vector3.ZERO
+var pen_gate_area: Area3D = null
+var pen_opened: bool = false
+var pen_center: Vector3 = Vector3.ZERO
+var follower_squad: FollowerSquad = null
+
 var rescue_nodes: Array[Node3D] = []
 var rescue_total: int = 0
 var rescued_this_level: int = 0
 
+var fruit_nodes: Array[Node3D] = []
+var puppy_base_speed: float = 6.0
+var fruit_speed_boost_until_ms: int = 0
+var level_won: bool = false
+
 var ui_layer: CanvasLayer = null
 var ui_root: Control = null
 var level_label: Label = null
+var boost_label: Label = null
 var hint_label: Label = null
 var win_panel: Panel = null
 var win_label: Label = null
@@ -70,6 +87,9 @@ func _ready() -> void:
 	builder = MazeBuilderScript.new()
 	_apply_boot_settings()
 	_build_ui()
+	follower_squad = FollowerSquad.new()
+	follower_squad.name = "FollowerSquad"
+	add_child(follower_squad)
 	set_physics_process(true)
 	load_level(_save.current_level)
 
@@ -86,6 +106,7 @@ func _apply_boot_settings() -> void:
 func load_level(level_index: int) -> void:
 	current_level = level_index
 	_save.current_level = level_index
+	level_won = false
 	_clear_runtime_pickups()
 
 	if randomize_each_load:
@@ -104,19 +125,38 @@ func load_level(level_index: int) -> void:
 
 	has_key = false
 	door_opened = false
+	pen_opened = false
+	has_pen = info.get("pen_gate") is Vector3
+	pen_center = _info_vec3(info, "pen_center")
 	rescued_this_level = 0
+	fruit_speed_boost_until_ms = 0
 
 	_spawn_key_if_present(info)
 	_spawn_exit_if_present(info)
 	_spawn_door_if_present(info)
-	_spawn_rescues(info)
+	_spawn_fruit_if_present(info)
+	if has_pen:
+		_spawn_pen_gate_if_present(info)
+	if info.has("rescue") and info.rescue.size() > 0:
+		_spawn_rescues(info)
 
 	if puppy.has_method("set_maze_data"):
 		puppy.set_maze_data(lines, ts)
 
+	puppy_base_speed = puppy.speed if "speed" in puppy else 6.0
+	puppy.speed = puppy_base_speed
+
 	puppy.global_position = info["start"]
 	if puppy.has_method("snap_to_floor"):
 		puppy.snap_to_floor()
+
+	if follower_squad != null:
+		follower_squad.rebind_for_level(
+			puppy.get_nav() if puppy.has_method("get_nav") else null,
+			_follower_floor_y(),
+			$World/ActorsRoot,
+			info["start"]
+		)
 
 	has_last_target = false
 	last_target = Vector3.ZERO
@@ -126,15 +166,27 @@ func load_level(level_index: int) -> void:
 	if current_level == 0 and not test_mode:
 		_set_hint("Level 1 — walk to the blue exit!")
 	elif test_mode:
-		_set_hint("Test maze — collect key, open door, reach exit.")
+		if has_pen:
+			_set_hint("Test maze — key opens pen gate; escort pups to exit.")
+		else:
+			_set_hint("Test maze — collect key, open door, reach exit.")
+	elif has_pen:
+		_set_hint("Find the key, open the pen gate, escort pups to the exit!")
 	else:
-		_set_hint("Find the key, open the door, reach the exit. Rescue pups optional!")
+		_set_hint("Find the key, open the door, reach the exit.")
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	_try_collect_key_near_puppy()
 	_try_collect_rescues_near_puppy()
+	_try_collect_fruit_near_puppy()
+	_update_fruit_speed_boost()
+	_update_boost_label()
 	_try_unlock_door_near_puppy()
+	_try_open_pen_near_puppy()
+	var gather_pos := _exit_gather_point()
+	if follower_squad != null and follower_squad.is_active():
+		follower_squad.tick(delta, puppy.global_position, gather_pos)
 	_try_reach_exit_near_puppy()
 
 
@@ -265,6 +317,16 @@ func _spawn_rescues(info: Dictionary) -> void:
 		_add_pickup_area(node, 0.4, _on_rescue_body_entered)
 
 
+func _spawn_fruit_if_present(info: Dictionary) -> void:
+	fruit_nodes.clear()
+	if not info.has("fruit"):
+		return
+	for pos: Vector3 in info.fruit:
+		var node := _make_marker("FruitMarker", pos + Vector3(0.0, 0.32, 0.0), Color(0.95, 0.35, 0.15), 0.11, 0.22)
+		fruit_nodes.append(node)
+		_add_pickup_area(node, 0.38, _on_fruit_body_entered)
+
+
 func _make_marker(marker_name: String, pos: Vector3, color: Color, radius: float, height: float, box: bool = false) -> Node3D:
 	var node := Node3D.new()
 	node.name = marker_name
@@ -310,8 +372,7 @@ func _spawn_door_if_present(info: Dictionary) -> void:
 	if door_body == null:
 		return
 	door_unlock_center = door_body.global_position
-	if puppy.has_method("set_door_blocking"):
-		puppy.set_door_blocking(true, door_unlock_center)
+	_refresh_dynamic_blockers()
 	door_area = Area3D.new()
 	door_area.collision_mask = LAYER_PLAYER
 	door_area.monitoring = true
@@ -347,8 +408,12 @@ func _collect_key() -> void:
 		key_node.queue_free()
 	key_node = null
 	key_area = null
-	_set_hint("Key collected! Touch the door.")
+	if has_pen:
+		_set_hint("Key collected! Touch the pen gate.")
+	else:
+		_set_hint("Key collected! Touch the door.")
 	_try_unlock_door_near_puppy()
+	_try_open_pen_near_puppy()
 
 
 func _on_rescue_body_entered(body: Node) -> void:
@@ -368,12 +433,143 @@ func _collect_rescue_node(node: Node3D) -> void:
 	if node == null or not rescue_nodes.has(node):
 		return
 	rescue_nodes.erase(node)
+	var spawn_pos: Vector3 = node.global_position
 	rescued_this_level += 1
 	SfxManager.play_rescue()
-	_burst_at(node.global_position, Color(1.0, 0.5, 0.8))
+	_burst_at(spawn_pos, Color(1.0, 0.5, 0.8))
 	node.queue_free()
 	_update_level_label()
-	_set_hint("Rescued a pup! (%d this level)" % rescued_this_level)
+	if _spawn_followers_at(spawn_pos) > 0:
+		var extra := " (double treat!)" if _is_fruit_boost_active() else ""
+		_set_hint("Rescued a pup! It follows you — bring it to the exit.%s" % extra)
+	else:
+		_set_hint("Rescued a pup! (%d this level)" % rescued_this_level)
+
+
+func _on_fruit_body_entered(body: Node) -> void:
+	if body == puppy:
+		_try_collect_fruit_near_puppy()
+
+
+func _try_collect_fruit_near_puppy() -> void:
+	if puppy == null:
+		return
+	for node in fruit_nodes.duplicate():
+		if is_instance_valid(node) and _near(puppy.global_position, node.global_position):
+			_collect_fruit_node(node)
+
+
+func _collect_fruit_node(node: Node3D) -> void:
+	if node == null or not fruit_nodes.has(node):
+		return
+	fruit_nodes.erase(node)
+	var burst_pos: Vector3 = node.global_position
+	node.queue_free()
+
+	rescued_this_level += 1
+	_apply_fruit_speed_boost()
+	_convert_rescues_to_followers()
+	SfxManager.play_fruit()
+	_burst_at(burst_pos, Color(0.95, 0.55, 0.1))
+	_update_level_label()
+
+	var hint := "Treat! Speed boost + double pup spawns for %.0fs." % fruit_boost_duration
+	if follower_squad != null and follower_squad.is_active():
+		hint = "Treat active! Pups follow you — bring them to the exit."
+	_set_hint(hint)
+
+
+func _apply_fruit_speed_boost() -> void:
+	if puppy == null:
+		return
+	fruit_speed_boost_until_ms = Time.get_ticks_msec() + int(fruit_boost_duration * 1000.0)
+	puppy.speed = puppy_base_speed * fruit_speed_multiplier
+	_update_boost_label()
+
+
+func _update_fruit_speed_boost() -> void:
+	if puppy == null or fruit_speed_boost_until_ms <= 0:
+		_update_boost_label()
+		return
+	if Time.get_ticks_msec() >= fruit_speed_boost_until_ms:
+		fruit_speed_boost_until_ms = 0
+		puppy.speed = puppy_base_speed
+	_update_boost_label()
+
+
+func _is_fruit_boost_active() -> bool:
+	return fruit_speed_boost_until_ms > 0 and Time.get_ticks_msec() < fruit_speed_boost_until_ms
+
+
+func _fruit_boost_seconds_left() -> float:
+	if not _is_fruit_boost_active():
+		return 0.0
+	return float(fruit_speed_boost_until_ms - Time.get_ticks_msec()) / 1000.0
+
+
+func _update_boost_label() -> void:
+	if boost_label == null:
+		return
+	if _is_fruit_boost_active():
+		boost_label.visible = true
+		boost_label.text = "Treat boost: %.1fs  |  Double pup spawns!" % _fruit_boost_seconds_left()
+	else:
+		boost_label.visible = false
+
+
+func _follower_floor_y() -> float:
+	var floor_y: float = 0.24
+	if puppy != null and puppy.has_method("_capsule_half_height"):
+		floor_y = puppy._capsule_half_height() * 0.55
+	return floor_y
+
+
+func _ensure_follower_squad_active() -> bool:
+	if puppy == null or follower_squad == null:
+		return false
+	var nav: MazeNav = puppy.get_nav() if puppy.has_method("get_nav") else null
+	if nav == null:
+		return false
+	if not follower_squad.is_active():
+		follower_squad.activate(nav, _follower_floor_y(), $World/ActorsRoot, puppy.global_position)
+	return true
+
+
+func _spawn_followers_at(world_pos: Vector3) -> int:
+	if not _ensure_follower_squad_active():
+		return 0
+	var spawned := 0
+	if follower_squad.add_follower(world_pos):
+		spawned += 1
+	if _is_fruit_boost_active():
+		var rng := RandomNumberGenerator.new()
+		rng.randomize()
+		var offset := Vector3(
+			rng.randf_range(-0.28, 0.28),
+			0.0,
+			rng.randf_range(-0.28, 0.28)
+		)
+		if follower_squad.add_follower(world_pos + offset):
+			spawned += 1
+	return spawned
+
+
+func _convert_rescues_to_followers() -> void:
+	if rescue_nodes.is_empty() or puppy == null or follower_squad == null:
+		return
+	if not _ensure_follower_squad_active():
+		return
+	var converted := 0
+	while converted < fruit_convert_max and not rescue_nodes.is_empty():
+		var marker: Node3D = rescue_nodes[0]
+		rescue_nodes.remove_at(0)
+		var spawn_pos: Vector3 = marker.global_position if is_instance_valid(marker) else puppy.global_position
+		if is_instance_valid(marker):
+			marker.queue_free()
+		if _spawn_followers_at(spawn_pos) > 0:
+			converted += 1
+		else:
+			break
 
 
 func _on_door_body_entered(body: Node) -> void:
@@ -400,8 +596,7 @@ func _open_door() -> void:
 	door_opened = true
 	SfxManager.play_door()
 	_burst_at(door_unlock_center, Color(1.0, 0.55, 0.15))
-	if puppy.has_method("set_door_blocking"):
-		puppy.set_door_blocking(false)
+	_refresh_dynamic_blockers()
 	if is_instance_valid(door_body):
 		door_body.queue_free()
 	door_body = null
@@ -421,17 +616,55 @@ func _try_reach_exit_near_puppy() -> void:
 		_try_reach_exit()
 
 
+func _exit_gather_point() -> Vector3:
+	if exit_node == null or puppy == null:
+		return Vector3.ZERO
+	if _near(puppy.global_position, exit_node.global_position):
+		return exit_node.global_position
+	return Vector3.ZERO
+
+
 func _try_reach_exit() -> void:
-	if current_level > 0 and not has_key:
+	if level_won:
+		return
+	if current_level > 0 and not has_key and (info_has_key_door()):
 		_set_hint("Need the key first.")
 		return
+	if has_pen and not pen_opened:
+		_set_hint("Open the pen gate with your key first!")
+		return
+	if follower_squad != null and follower_squad.is_active():
+		var exit_pos: Vector3 = exit_node.global_position if exit_node else Vector3.ZERO
+		if exit_pos == Vector3.ZERO:
+			return
+		if not _near(puppy.global_position, exit_pos):
+			return
+		if not follower_squad.all_gathered_at(exit_pos):
+			var need: int = follower_squad.required_at_exit_count()
+			_set_hint("Waiting for pups to catch up! (%d/%d)" % [
+				follower_squad.count_gathered_at(exit_pos), need
+			])
+			return
+		rescued_this_level = follower_squad.count_gathered_at(exit_pos)
 	_complete_level()
 
 
+func info_has_key_door() -> bool:
+	return current_level > 0 or test_mode
+
+
 func _complete_level() -> void:
+	if level_won:
+		return
+	level_won = true
 	SfxManager.play_win()
 	_burst_at(exit_node.global_position if exit_node else puppy.global_position, Color(0.3, 0.7, 1.0))
 	_show_win_panel()
+
+
+func _info_vec3(info: Dictionary, key: StringName) -> Vector3:
+	var v: Variant = info.get(key)
+	return v if v is Vector3 else Vector3.ZERO
 
 
 func _near(a: Vector3, b: Vector3) -> bool:
@@ -501,6 +734,15 @@ func _build_ui() -> void:
 	level_label.size = Vector2(700, 24)
 	ui_root.add_child(level_label)
 
+	boost_label = Label.new()
+	boost_label.visible = false
+	boost_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	boost_label.offset_top = m + 8
+	boost_label.offset_left = -220
+	boost_label.offset_right = 220
+	boost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ui_root.add_child(boost_label)
+
 	hint_label = Label.new()
 	hint_label.position = Vector2(m, m + 78)
 	hint_label.size = Vector2(900, 28)
@@ -565,7 +807,9 @@ func _show_win_panel() -> void:
 		win_panel.visible = true
 	if win_label:
 		var rescue_line := ""
-		if rescue_total > 0:
+		if follower_squad != null and follower_squad.is_active():
+			rescue_line = "\nPups at exit: %d" % rescued_this_level
+		elif rescue_total > 0:
 			rescue_line = "\nRescued this level: %d / %d" % [rescued_this_level, rescue_total]
 		win_label.text = "Level %d complete!%s\nTotal rescued: %d" % [
 			current_level + 1, rescue_line, _save.total_rescued + rescued_this_level
@@ -590,6 +834,13 @@ func _clear_runtime_pickups() -> void:
 	rescue_nodes.clear()
 	rescue_total = 0
 
+	for node in fruit_nodes:
+		if is_instance_valid(node):
+			node.queue_free()
+	fruit_nodes.clear()
+	if puppy != null and "speed" in puppy:
+		puppy.speed = puppy_base_speed
+
 	if key_node:
 		key_node.queue_free()
 	key_node = null
@@ -605,6 +856,84 @@ func _clear_runtime_pickups() -> void:
 	door_unlock_center = Vector3.ZERO
 	has_key = false
 	door_opened = false
-	if puppy != null and puppy.has_method("set_door_blocking"):
-		puppy.set_door_blocking(false)
+	pen_gate_body = null
+	pen_gate_area = null
+	pen_gate_center = Vector3.ZERO
+	pen_opened = false
+	has_pen = false
+	_refresh_dynamic_blockers()
 	_hide_win_panel()
+
+
+func _refresh_dynamic_blockers() -> void:
+	if puppy == null or not puppy.has_method("set_dynamic_blockers"):
+		return
+	var blockers: Array = []
+	if door_body != null and not door_opened:
+		blockers.append(door_unlock_center)
+	if pen_gate_body != null and not pen_opened:
+		blockers.append(pen_gate_center)
+	puppy.call("set_dynamic_blockers", blockers)
+
+
+func _spawn_pen_gate_if_present(info: Dictionary) -> void:
+	if not info.has("pen_gate") or info.pen_gate == null:
+		return
+	pen_gate_body = info.get("pen_gate_body") as StaticBody3D
+	if pen_gate_body == null:
+		return
+	pen_gate_center = pen_gate_body.global_position
+	_refresh_dynamic_blockers()
+	pen_gate_area = Area3D.new()
+	pen_gate_area.collision_mask = LAYER_PLAYER
+	pen_gate_area.monitoring = true
+	pen_gate_body.add_child(pen_gate_area)
+	var col := CollisionShape3D.new()
+	var shape := SphereShape3D.new()
+	shape.radius = door_unlock_radius
+	col.shape = shape
+	pen_gate_area.add_child(col)
+	pen_gate_area.body_entered.connect(_on_pen_gate_body_entered)
+
+
+func _on_pen_gate_body_entered(body: Node) -> void:
+	if body == puppy:
+		_try_open_pen()
+
+
+func _try_open_pen_near_puppy() -> void:
+	if not has_key or pen_opened or pen_gate_body == null or puppy == null:
+		return
+	if _near(puppy.global_position, pen_gate_center):
+		_try_open_pen()
+
+
+func _try_open_pen() -> void:
+	if pen_opened or not has_key:
+		if not has_key:
+			_set_hint("Pen gate is locked. Need the key.")
+		return
+	_open_pen()
+
+
+func _open_pen() -> void:
+	pen_opened = true
+	SfxManager.play_door()
+	_burst_at(pen_gate_center, Color(1.0, 0.6, 0.85))
+	_refresh_dynamic_blockers()
+	if is_instance_valid(pen_gate_body):
+		pen_gate_body.queue_free()
+	pen_gate_body = null
+	if pen_gate_area and is_instance_valid(pen_gate_area):
+		pen_gate_area.queue_free()
+	pen_gate_area = null
+	var nav: MazeNav = puppy.get_nav() if puppy.has_method("get_nav") else null
+	if nav != null and follower_squad != null:
+		var spawn: Vector3 = pen_center
+		if spawn == Vector3.ZERO:
+			spawn = pen_gate_center
+		var floor_y: float = 0.24
+		if puppy.has_method("_capsule_half_height"):
+			floor_y = puppy._capsule_half_height() * 0.55
+		follower_squad.spawn_in_pen(nav, spawn, floor_y, $World/ActorsRoot, puppy.global_position)
+	_set_hint("Pen open! Lead the pups to the exit.")
