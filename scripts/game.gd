@@ -30,6 +30,7 @@ const UpgradeCatalogScript := preload("res://scripts/upgrade_catalog.gd")
 const UltraPowerupCatalogScript := preload("res://scripts/ultra_powerup_catalog.gd")
 const MazeBuilderScript := preload("res://scripts/maze_builder.gd")
 const FootprintTrailScript := preload("res://scripts/footprint_trail.gd")
+const GameVersionScript := preload("res://scripts/game_version.gd")
 const LAYER_PLAYER := 2
 
 var cam: Camera3D
@@ -80,6 +81,8 @@ var speed_boost_until_ms: int = 0
 var double_rescue_until_ms: int = 0
 var level_won: bool = false
 var _exit_wait_start_ms: int = -1
+var run_squad_bonus: int = 0
+var _exit_roundup_snapped: bool = false
 
 const EXIT_GRACE_MS: int = 1200
 
@@ -126,10 +129,10 @@ func _ready() -> void:
 func _apply_boot_settings() -> void:
 	if _save.boot_test_mode:
 		test_mode = true
-	if puppy.has_method("set") and "breed" in puppy:
-		puppy.set("breed", clampi(_save.breed, 0, 2))
-	if puppy.has_method("_apply_breed_mesh"):
-		puppy._apply_breed_mesh()
+	if puppy.has_method("set_coat_index"):
+		puppy.call_deferred("set_coat_index", _save.coat_index)
+	elif puppy.has_method("_apply_coat_mesh"):
+		puppy.call_deferred("_apply_coat_mesh")
 	_setup_pup_appearance()
 
 
@@ -138,6 +141,12 @@ func load_level(level_index: int) -> void:
 	_save.current_level = level_index
 	level_won = false
 	_clear_runtime_pickups()
+
+	if _save.boot_new_game or _save.boot_test_mode:
+		run_squad_bonus = 0
+	if _save.boot_new_game:
+		_save.boot_new_game = false
+	_exit_roundup_snapped = false
 
 	if randomize_each_load:
 		run_seed = (run_seed + 1337) ^ randi()
@@ -181,6 +190,9 @@ func load_level(level_index: int) -> void:
 
 	if puppy.has_method("set_maze_data"):
 		puppy.set_maze_data(lines, ts)
+
+	if puppy.has_method("set_coat_index"):
+		puppy.set_coat_index(_save.coat_index)
 
 	puppy_base_speed = puppy.speed if "speed" in puppy else 6.0
 	_apply_meta_upgrades()
@@ -230,7 +242,7 @@ func _physics_process(delta: float) -> void:
 	_update_speed_boost()
 	ultra_buffs.tick()
 	if footprint_trail != null and footprint_trail.has_method("set_rainbow_mode"):
-		footprint_trail.set_rainbow_mode(ultra_buffs.wants_rainbow_trail())
+		footprint_trail.set_rainbow_mode(_wants_rainbow_trail())
 	_update_rescue_reveal()
 	_update_boost_label()
 	_update_coins_label()
@@ -264,12 +276,20 @@ func _setup_pup_appearance() -> void:
 	pup_appearance = PupAppearanceScript.new()
 	pup_appearance.name = "PupAppearance"
 	if puppy != null:
-		puppy.add_child(pup_appearance)
+		var mount: Node3D = puppy.get_model_node() if puppy.has_method("get_model_node") else null
+		if mount != null:
+			pup_appearance.mount_to(mount)
+		else:
+			puppy.add_child(pup_appearance)
 
 
 func _refresh_pup_appearance() -> void:
 	_setup_pup_appearance()
 	if pup_appearance != null:
+		if puppy != null and puppy.has_method("get_model_node"):
+			var mount: Node3D = puppy.get_model_node()
+			if mount != null:
+				pup_appearance.mount_to(mount)
 		pup_appearance.apply_loadout(_save.equipped)
 
 
@@ -281,14 +301,25 @@ func _apply_follower_collar() -> void:
 		follower_squad.set_collar_accessory(collar_id)
 
 
+func _compute_max_followers() -> int:
+	var cap: int = ProgressionConfigScript.BASE_SQUAD_CAP \
+		+ run_squad_bonus \
+		+ int(_save.get_upgrade_value("max_followers", 0.0))
+	return mini(cap, ProgressionConfigScript.SQUAD_HARD_CAP)
+
+
+func _wants_rainbow_trail() -> bool:
+	return _save.has_rainbow_trail() or ultra_buffs.wants_rainbow_trail()
+
+
 func _apply_meta_upgrades() -> void:
 	var base: float = 6.0 if not ("speed" in puppy) else float(puppy.get("speed"))
 	puppy_base_speed = base * _save.get_upgrade_mult("speed_mult", 1.0)
 	speed_boost_duration = 10.0 + _save.get_upgrade_value("speed_boost_duration", 0.0)
 	if follower_squad != null:
-		follower_squad.max_followers = 24 + int(_save.get_upgrade_value("max_followers", 0.0))
+		follower_squad.max_followers = _compute_max_followers()
 	if footprint_trail != null and footprint_trail.has_method("set_rainbow_mode"):
-		footprint_trail.set_rainbow_mode(ultra_buffs.wants_rainbow_trail())
+		footprint_trail.set_rainbow_mode(_wants_rainbow_trail())
 
 
 func _award_level_coins() -> Dictionary:
@@ -326,6 +357,11 @@ func _purchase_shop_item(item_type: String, item_id: String) -> void:
 				_set_hint("Not enough Treat Coins!")
 				return
 			_save.unlock_accessory(item_id)
+			var slot: String = entry.get("slot", "")
+			if _save.get_equipped(slot) == "":
+				_save.equip_accessory(slot, item_id)
+			_refresh_pup_appearance()
+			_apply_follower_collar()
 			SfxManager.play_shop_buy()
 			_save.save_game()
 		"upgrade":
@@ -514,8 +550,8 @@ func _collect_ultra_node(node: Node3D) -> void:
 	var entry: Dictionary = ultra_buffs.apply(ultra_id)
 	if entry.is_empty():
 		return
-	if ultra_buffs.wants_rainbow_trail() and footprint_trail != null:
-		footprint_trail.set_rainbow_mode(true)
+	if footprint_trail != null:
+		footprint_trail.set_rainbow_mode(_wants_rainbow_trail())
 	SfxManager.play_ultra()
 	_burst_at(burst_pos, Color.from_string(str(entry.get("color", "#FFD700")), Color.GOLD))
 	_set_hint("Ultra: %s!" % entry.get("name", ultra_id))
@@ -894,9 +930,11 @@ func _collect_double_boost_node(node: Node3D) -> void:
 	var burst_pos: Vector3 = node.global_position
 	node.queue_free()
 	_apply_double_rescue_boost()
+	run_squad_bonus += ProgressionConfigScript.DOUBLE_BOOST_SQUAD_BONUS
+	_apply_meta_upgrades()
 	SfxManager.play_double_boost()
 	_burst_at(burst_pos, Color(0.75, 0.45, 1.0))
-	_set_hint("Double pup boost! Two spawns per rescue for %.0fs." % double_rescue_duration)
+	_set_hint("Double pup boost + +1 squad size! (cap: %d)" % _compute_max_followers())
 
 
 func _apply_speed_boost() -> void:
@@ -1064,6 +1102,12 @@ func _try_reach_exit() -> void:
 		if not _near(puppy.global_position, exit_pos):
 			_exit_wait_start_ms = -1
 			return
+		if _save.has_exit_roundup() and not _exit_roundup_snapped:
+			follower_squad.snap_all_to(exit_pos)
+			_exit_roundup_snapped = true
+			SfxManager.play_roundup()
+			_complete_level()
+			return
 		if _exit_wait_start_ms < 0:
 			_exit_wait_start_ms = Time.get_ticks_msec()
 		var gathered: int = follower_squad.count_gathered_at(exit_pos)
@@ -1076,7 +1120,10 @@ func _try_reach_exit() -> void:
 		if gathered < need:
 			_set_hint("Waiting for pups to catch up! (%d/%d)" % [gathered, need])
 			return
-	_complete_level()
+		_complete_level()
+		return
+	if exit_node != null and _near(puppy.global_position, exit_node.global_position):
+		_complete_level()
 
 
 func info_has_key_door() -> bool:
@@ -1196,6 +1243,15 @@ func _build_ui() -> void:
 	hint_label.position = Vector2(m, m + 78)
 	hint_label.size = Vector2(900, 28)
 	ui_root.add_child(hint_label)
+
+	var version_label := Label.new()
+	version_label.text = GameVersionScript.version_label()
+	version_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	version_label.offset_left = m
+	version_label.offset_bottom = -m
+	version_label.add_theme_font_size_override("font_size", 12)
+	version_label.add_theme_color_override("font_color", Color(0.35, 0.38, 0.45, 0.85))
+	ui_root.add_child(version_label)
 
 	win_panel = Panel.new()
 	win_panel.visible = false
@@ -1320,7 +1376,7 @@ func _clear_runtime_pickups() -> void:
 	coins_this_level = 0
 	ultra_buffs.clear()
 	if footprint_trail != null and footprint_trail.has_method("set_rainbow_mode"):
-		footprint_trail.set_rainbow_mode(false)
+		footprint_trail.set_rainbow_mode(_wants_rainbow_trail())
 	if puppy != null and "speed" in puppy:
 		puppy.speed = puppy_base_speed
 

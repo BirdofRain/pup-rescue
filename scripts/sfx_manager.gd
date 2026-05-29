@@ -54,6 +54,12 @@ func play_shop_buy() -> void:
 	t.timeout.connect(func(): play_tone(1050.0, 0.08, -7.0), CONNECT_ONE_SHOT)
 
 
+func play_roundup() -> void:
+	play_tone(560.0, 0.06, -6.0)
+	var t := get_tree().create_timer(0.04)
+	t.timeout.connect(func(): play_tone(920.0, 0.1, -5.0), CONNECT_ONE_SHOT)
+
+
 func play_ultra() -> void:
 	play_tone(400.0, 0.12, -5.0)
 	var t := get_tree().create_timer(0.1)

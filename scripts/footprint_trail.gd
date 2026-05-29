@@ -6,6 +6,8 @@ extends Node3D
 @export var foot_spacing: float = 0.07
 @export var footprint_size: Vector2 = Vector2(0.12, 0.16)
 @export var muddy_color: Color = Color(0.44, 0.34, 0.24, 0.52)
+@export var footprint_scale: float = 1.0
+@export var color_alpha_mult: float = 1.0
 
 var _rainbow_mode: bool = false
 
@@ -21,7 +23,7 @@ var _rng := RandomNumberGenerator.new()
 func _ready() -> void:
 	_rng.randomize()
 	_mat = StandardMaterial3D.new()
-	_mat.albedo_color = muddy_color
+	_mat.albedo_color = Color(muddy_color.r, muddy_color.g, muddy_color.b, muddy_color.a * color_alpha_mult)
 	_mat.roughness = 1.0
 	_mat.metallic = 0.0
 	_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -47,6 +49,7 @@ func tick(player_pos: Vector3, velocity: Vector3) -> void:
 	var p := player_pos
 	p.y = floor_y
 	var move_dir := Vector3(velocity.x, 0.0, velocity.z)
+	var speed: float = move_dir.length()
 	if not _has_last:
 		_last_pos = p
 		_has_last = true
@@ -56,6 +59,9 @@ func tick(player_pos: Vector3, velocity: Vector3) -> void:
 			move_dir = move_dir.normalized()
 		_spawn_at(p, move_dir)
 		_left_foot = not _left_foot
+		return
+	if speed < 0.35:
+		_last_pos = p
 		return
 	var moved: float = Vector2(p.x, p.z).distance_to(Vector2(_last_pos.x, _last_pos.z))
 	if moved <= 0.01:
@@ -83,7 +89,7 @@ func _spawn_at(pos: Vector3, move_dir: Vector3) -> void:
 	var world_pos := pos + side * lateral
 	world_pos.y = floor_y
 	var yaw: float = atan2(flat_dir.x, flat_dir.z) + _rng.randf_range(-0.15, 0.15)
-	var size_jitter: float = _rng.randf_range(0.94, 1.06)
+	var size_jitter: float = _rng.randf_range(0.94, 1.06) * footprint_scale
 	var mi := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
 	plane.size = footprint_size * size_jitter

@@ -3,17 +3,15 @@ extends Node
 
 const FollowerPuppyScript := preload("res://scripts/follower_puppy.gd")
 
-@export var max_followers: int = 24
+@export var max_followers: int = 5
 @export var follow_spacing: float = 0.95
-@export var min_history_step: float = 0.04
+@export var min_history_step: float = 0.03
 @export var max_history: int = 480
 @export var exit_radius: float = 0.65
 @export var gather_radius: float = 1.15
 @export var player_still_threshold: float = 0.06
 @export var gather_blend_time: float = 1.2
 @export var min_player_clearance: float = 0.55
-@export var wander_radius: float = 0.14
-@export var wander_near_distance: float = 1.2
 
 var _collar_id: String = ""
 var _followers: Array[Node3D] = []
@@ -25,7 +23,6 @@ var _active: bool = false
 var _player_idle_time: float = 0.0
 var _last_player_pos: Vector3 = Vector3.ZERO
 var _has_last_player_pos: bool = false
-var _wander_time: float = 0.0
 
 
 func is_active() -> bool:
@@ -58,22 +55,18 @@ func set_collar_accessory(accessory_id: String) -> void:
 			pup.call("apply_collar", accessory_id)
 
 
-func add_follower(spawn_pos: Vector3, breed_index: int = -1) -> bool:
+func add_follower(spawn_pos: Vector3, _breed_index: int = -1) -> bool:
 	if not _active or _parent == null or _nav == null:
 		return false
 	if _followers.size() >= max_followers:
 		return false
-	var rng := RandomNumberGenerator.new()
-	rng.randomize()
-	if breed_index < 0:
-		breed_index = rng.randi_range(0, 2)
 	var pup := Node3D.new()
 	pup.name = "Follower_%d" % _followers.size()
 	pup.set_script(FollowerPuppyScript)
 	_parent.add_child(pup)
 	var pos := spawn_pos
 	pos.y = _floor_y
-	(pup as Node).call("setup", _nav, pos, breed_index)
+	(pup as Node).call("setup", _nav, pos, -1, _followers.size())
 	if _collar_id != "":
 		pup.call("apply_collar", _collar_id)
 	_followers.append(pup)
@@ -93,7 +86,7 @@ func spawn_in_pen(nav: MazeNav, pen_center: Vector3, floor_y: float, parent: Nod
 			0.0,
 			rng.randf_range(-0.35, 0.35)
 		)
-		add_follower(pen_center + offset, rng.randi_range(0, 2))
+		add_follower(pen_center + offset, -1)
 
 
 func rebind_for_level(nav: MazeNav, floor_y: float, parent: Node3D, player_start: Vector3) -> void:
@@ -155,7 +148,6 @@ func clear() -> void:
 func tick(delta: float, player_pos: Vector3, gather_point: Vector3 = Vector3.ZERO, speed_mult: float = 1.0) -> void:
 	if not _active:
 		return
-	_wander_time += delta
 	_update_player_idle(player_pos, delta)
 	_record_player(player_pos)
 	if _history.is_empty():
@@ -171,8 +163,12 @@ func tick(delta: float, player_pos: Vector3, gather_point: Vector3 = Vector3.ZER
 		var pup: Node3D = _followers[i]
 		if not is_instance_valid(pup):
 			continue
-		var target: Vector3 = _chain_target(i, player_pos, pup.global_position)
+		var target: Vector3 = _trail_target_for_index(i, player_pos, pup.global_position)
 		var speed_scale: float = 1.0
+		var need_dist: float = follow_spacing * float(i + 1)
+		var trail_avail: float = _trail_length()
+		if need_dist > trail_avail - follow_spacing * 0.25:
+			speed_scale *= clampf(1.35 + (need_dist - trail_avail) * 0.4, 1.35, 3.0)
 		if gather_blend > 0.0:
 			var center: Vector3 = gather_point if gathering else player_pos
 			center.y = _floor_y
@@ -182,14 +178,14 @@ func tick(delta: float, player_pos: Vector3, gather_point: Vector3 = Vector3.ZER
 				target = gather_target
 			else:
 				var effective_spacing: float = lerpf(follow_spacing, 0.0, gather_blend)
-				var trail_target: Vector3 = _chain_target(i, player_pos, pup.global_position)
-				if i == 0:
-					trail_target = _sample_trail(effective_spacing)
+				var trail_target: Vector3 = _sample_trail(effective_spacing * float(i + 1))
+				if trail_target == Vector3.ZERO:
+					trail_target = player_pos
+				trail_target.y = _floor_y
 				target = trail_target.lerp(gather_target, gather_blend)
 			target = _clamp_min_distance_from(target, player_pos, min_player_clearance)
 			speed_scale = 1.0 + gather_blend * 2.2
-		var wander := _wander_offset(i, target, player_pos)
-		pup.call("set_target", target, wander)
+		pup.call("set_target", target)
 		pup.call("update_follow", delta, speed_scale * speed_mult)
 
 
@@ -209,20 +205,24 @@ func _clamp_min_distance_from(target: Vector3, center: Vector3, min_dist: float)
 	return target
 
 
-func _wander_offset(index: int, target: Vector3, player_pos: Vector3) -> Vector3:
-	var pup_pos: Vector3 = Vector3.ZERO
-	if index < _followers.size() and is_instance_valid(_followers[index]):
-		pup_pos = _followers[index].global_position
-	var near_target: float = Vector2(pup_pos.x, pup_pos.z).distance_to(Vector2(target.x, target.z))
-	var near_player: float = Vector2(pup_pos.x, pup_pos.z).distance_to(Vector2(player_pos.x, player_pos.z))
-	if near_target > wander_near_distance and near_player > wander_near_distance:
-		return Vector3.ZERO
-	var phase: float = _wander_time * 1.7 + float(index) * 1.9
-	return Vector3(
-		cos(phase) * wander_radius,
-		0.0,
-		sin(phase * 1.3) * wander_radius
-	)
+func _trail_target_for_index(index: int, player_pos: Vector3, pup_pos: Vector3) -> Vector3:
+	var dist: float = follow_spacing * float(index + 1)
+	var available: float = _trail_length()
+	if dist > available - follow_spacing * 0.25:
+		dist = maxf(follow_spacing * 0.55, available - follow_spacing * 0.35)
+	var target: Vector3 = _sample_trail(dist)
+	if target == Vector3.ZERO:
+		target = player_pos
+	target.y = _floor_y
+	var pup_dist: float = Vector2(pup_pos.x, pup_pos.z).distance_to(Vector2(player_pos.x, player_pos.z))
+	var target_dist: float = Vector2(target.x, target.z).distance_to(Vector2(player_pos.x, player_pos.z))
+	if pup_dist + 0.3 < target_dist:
+		var closer_dist: float = maxf(follow_spacing * 0.4, pup_dist - follow_spacing * 0.15)
+		target = _sample_trail(closer_dist)
+		if target == Vector3.ZERO:
+			target = player_pos
+		target.y = _floor_y
+	return target
 
 
 func _update_player_idle(player_pos: Vector3, delta: float) -> void:
@@ -248,44 +248,6 @@ func _ring_offset(index: int, total: int, radius: float) -> Vector3:
 	return Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
 
 
-func _chain_target(index: int, player_pos: Vector3, pup_pos: Vector3) -> Vector3:
-	if index == 0:
-		return _leader_trail_target(pup_pos, player_pos)
-	var leader: Node3D = _followers[index - 1]
-	if not is_instance_valid(leader):
-		return _sample_trail((float(index) + 1.0) * follow_spacing)
-	var leader_pos: Vector3 = leader.global_position
-	leader_pos.y = _floor_y
-	var dir := Vector3.ZERO
-	if index >= 2 and is_instance_valid(_followers[index - 2]):
-		var prev_pos: Vector3 = _followers[index - 2].global_position
-		dir = leader_pos - prev_pos
-	if dir.length() < 0.05:
-		dir = player_pos - leader_pos
-	if dir.length() < 0.05:
-		dir = pup_pos - leader_pos
-	if dir.length() < 0.05:
-		dir = Vector3(0.0, 0.0, 1.0)
-	dir = Vector3(dir.x, 0.0, dir.z).normalized()
-	var target: Vector3 = leader_pos - dir * follow_spacing
-	target.y = _floor_y
-	return target
-
-
-func _leader_trail_target(pup_pos: Vector3, player_pos: Vector3) -> Vector3:
-	var target: Vector3 = _sample_trail(follow_spacing)
-	var pup_dist: float = Vector2(pup_pos.x, pup_pos.z).distance_to(Vector2(player_pos.x, player_pos.z))
-	var target_dist: float = Vector2(target.x, target.z).distance_to(Vector2(player_pos.x, player_pos.z))
-	if pup_dist + 0.25 < target_dist:
-		var away: Vector3 = pup_pos - player_pos
-		if away.length() > 0.05:
-			target = player_pos + away.normalized() * follow_spacing * 0.35
-		else:
-			target = player_pos
-		target.y = _floor_y
-	return target
-
-
 func _record_player(player_pos: Vector3) -> void:
 	var p := player_pos
 	p.y = _floor_y
@@ -300,13 +262,37 @@ func _record_player(player_pos: Vector3) -> void:
 			var old_dir := Vector2(last.x - prev.x, last.z - prev.z)
 			if new_dir.length() > 0.001 and old_dir.length() > 0.001:
 				if new_dir.normalized().dot(old_dir.normalized()) < 0.25:
-					while _history.size() > 32:
+					var min_keep: int = _min_history_keep()
+					while _history.size() > min_keep:
 						_history.remove_at(0)
 		_history.append(p)
 	else:
 		_history[_history.size() - 1] = p
-	while _history.size() > max_history:
+	var capacity: int = _history_capacity()
+	while _history.size() > capacity:
 		_history.remove_at(0)
+
+
+func _history_capacity() -> int:
+	var slots: int = maxi(max_followers, _followers.size())
+	var needed_dist: float = follow_spacing * float(slots + 3)
+	return maxi(max_history, int(needed_dist / min_history_step) + 96)
+
+
+func _min_history_keep() -> int:
+	var slots: int = maxi(max_followers, _followers.size())
+	return mini(_history.size(), int((follow_spacing * float(slots + 1)) / min_history_step) + 48)
+
+
+func _trail_length() -> float:
+	if _history.size() < 2:
+		return 0.0
+	var total: float = 0.0
+	for i in range(_history.size() - 1, 0, -1):
+		var a: Vector3 = _history[i]
+		var b: Vector3 = _history[i - 1]
+		total += Vector2(a.x, a.z).distance_to(Vector2(b.x, b.z))
+	return total
 
 
 func _sample_trail(distance_behind: float) -> Vector3:
@@ -326,6 +312,21 @@ func _sample_trail(distance_behind: float) -> Vector3:
 			return a.lerp(b, t)
 		traveled += seg
 	return _history[0]
+
+
+func snap_all_to(pos: Vector3) -> void:
+	_prune_invalid_followers()
+	var count: int = _followers.size()
+	for i in range(count):
+		var pup: Node3D = _followers[i]
+		if not is_instance_valid(pup):
+			continue
+		var ring := _ring_offset(i, count, 0.35)
+		var p := pos + ring
+		p.y = _floor_y
+		pup.global_position = p
+		if pup.has_method("rebind_nav"):
+			pup.call("rebind_nav", _nav, p)
 
 
 func count_gathered_at(gather_pos: Vector3) -> int:

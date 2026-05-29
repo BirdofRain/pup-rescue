@@ -2,8 +2,21 @@ class_name PupAppearance
 extends Node3D
 
 const AccessoryCatalogScript := preload("res://scripts/accessory_catalog.gd")
+const ACCESSORY_SCALE_MULT: float = 2.5
 
 var _slot_nodes: Dictionary = {}
+var _mount: Node3D = null
+
+
+func mount_to(node: Node3D) -> void:
+	if node == null:
+		return
+	if get_parent() != node:
+		if get_parent() != null:
+			reparent(node)
+		else:
+			node.add_child(self)
+	_mount = node
 
 
 func apply_loadout(equipped: Dictionary) -> void:
@@ -52,13 +65,14 @@ func _set_slot(slot: String, accessory_id: String) -> void:
 
 func _build_accessory_mesh(entry: Dictionary) -> MeshInstance3D:
 	var shape: String = entry.get("shape", "bow")
-	var scale_v: float = float(entry.get("scale", 0.18))
+	var scale_v: float = float(entry.get("scale", 0.18)) * ACCESSORY_SCALE_MULT
 	var offset_arr: Array = entry.get("offset", [0.0, 0.4, 0.0])
 	var offset := Vector3(
 		float(offset_arr[0]) if offset_arr.size() > 0 else 0.0,
 		float(offset_arr[1]) if offset_arr.size() > 1 else 0.4,
 		float(offset_arr[2]) if offset_arr.size() > 2 else 0.0
 	)
+	offset *= ACCESSORY_SCALE_MULT * 0.42
 	var color: Color = Color.from_string(str(entry.get("color", "#FFFFFF")), Color.WHITE)
 	var mesh_inst := MeshInstance3D.new()
 	mesh_inst.position = offset
@@ -88,6 +102,10 @@ func _build_accessory_mesh(entry: Dictionary) -> MeshInstance3D:
 			var box := BoxMesh.new()
 			box.size = Vector3(scale_v, scale_v * 0.3, scale_v * 0.3)
 			mesh_inst.mesh = box
+		"goggles":
+			var band := BoxMesh.new()
+			band.size = Vector3(scale_v * 2.2, scale_v * 0.35, scale_v * 0.5)
+			mesh_inst.mesh = band
 		"backpack_box":
 			var pack := BoxMesh.new()
 			pack.size = Vector3(scale_v * 0.9, scale_v, scale_v * 0.5)

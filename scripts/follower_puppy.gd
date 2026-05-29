@@ -1,24 +1,20 @@
 extends Node3D
 
-const BREED_MESH_PATHS: Array[String] = [
-	"res://assets/VoxelHusky.obj",
-	"res://assets/VoxelLabrador.obj",
-	"res://assets/VoxelPitbull.obj",
-]
+const PupColorsScript := preload("res://scripts/pup_colors.gd")
 const PupAppearanceScript := preload("res://scripts/pup_appearance.gd")
 
 @export var move_speed: float = 6.5
 @export var catchup_distance: float = 0.85
-@export var catchup_multiplier: float = 1.65
+@export var catchup_multiplier: float = 2.0
 @export var gather_speed_multiplier: float = 2.4
 @export var model_scale: float = 0.52
 @export var floor_y: float = 0.24
 @export var arrival_slow_radius: float = 0.9
 @export var direct_follow_range: float = 2.8
 
-const PATH_REBUILD_DIST: float = 0.45
-const WAYPOINT_REACH: float = 0.2
-const STUCK_TIME: float = 0.4
+const PATH_REBUILD_DIST: float = 0.28
+const WAYPOINT_REACH: float = 0.22
+const STUCK_TIME: float = 0.25
 
 var _nav: MazeNav
 var _target: Vector3 = Vector3.ZERO
@@ -30,9 +26,12 @@ var _stuck_timer: float = 0.0
 var _last_pos: Vector3 = Vector3.ZERO
 var _mesh: MeshInstance3D
 var _appearance = null
+var _coat_color: Color = Color.WHITE
+var _follower_index: int = 0
+var _mesh_loaded: bool = false
 
 
-func setup(nav: MazeNav, spawn_pos: Vector3, breed_index: int) -> void:
+func setup(nav: MazeNav, spawn_pos: Vector3, _breed_index: int = -1, follower_index: int = -1) -> void:
 	_nav = nav
 	_target = spawn_pos
 	_wander_offset = Vector3.ZERO
@@ -43,14 +42,20 @@ func setup(nav: MazeNav, spawn_pos: Vector3, breed_index: int) -> void:
 	global_position = spawn_pos
 	global_position.y = floor_y
 	_last_pos = global_position
-	_build_mesh(breed_index)
+	if follower_index >= 0:
+		_follower_index = follower_index
+		_coat_color = PupColorsScript.get_color(follower_index)
+	_build_mesh()
 
 
 func apply_collar(accessory_id: String) -> void:
 	if _appearance == null:
 		_appearance = PupAppearanceScript.new()
 		_appearance.name = "FollowerAppearance"
-		add_child(_appearance)
+		if _mesh != null:
+			_appearance.mount_to(_mesh)
+		else:
+			add_child(_appearance)
 	_appearance.apply_collar_only(accessory_id)
 
 
@@ -169,9 +174,9 @@ func update_follow(delta: float, speed_scale: float = 1.0) -> void:
 	next = _nav.resolve_motion(from, next, floor_y)
 	next.y = floor_y
 	global_position = next
-	if dir.length() > 0.01:
-		var basis := Basis.looking_at(dir, Vector3.UP)
-		global_basis = global_basis.slerp(basis, 10.0 * delta)
+	if dir.length() > 0.01 and _mesh != null:
+		var target_yaw: float = atan2(dir.x, dir.z) + PupColorsScript.MODEL_YAW_OFFSET
+		_mesh.rotation.y = lerp_angle(_mesh.rotation.y, target_yaw, 10.0 * delta)
 	_check_stuck(delta)
 
 
@@ -188,12 +193,24 @@ func _check_stuck(delta: float) -> void:
 	_last_pos = global_position
 
 
-func _build_mesh(breed_index: int) -> void:
+func _build_mesh() -> void:
 	if _mesh == null:
 		_mesh = MeshInstance3D.new()
 		add_child(_mesh)
-	_mesh.scale = Vector3.ONE * model_scale
-	var idx: int = clampi(breed_index, 0, BREED_MESH_PATHS.size() - 1)
-	var mesh_res: Mesh = load(BREED_MESH_PATHS[idx]) as Mesh
-	if mesh_res != null:
-		_mesh.mesh = mesh_res
+	var scale_mult: float = 0.94 + float(_follower_index % 3) * 0.06
+	_mesh.scale = Vector3.ONE * model_scale * scale_mult
+	if not _mesh_loaded:
+		var mesh_res: Mesh = load(PupColorsScript.MESH_PATH) as Mesh
+		if mesh_res != null:
+			_mesh.mesh = mesh_res
+			_mesh_loaded = true
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = _coat_color
+	mat.roughness = 0.85
+	mat.metallic = 0.0
+	mat.emission_enabled = true
+	mat.emission = _coat_color * 0.22
+	_mesh.material_override = mat
+	if _mesh.mesh != null:
+		for i in range(_mesh.mesh.get_surface_count()):
+			_mesh.set_surface_override_material(i, mat)

@@ -4,10 +4,11 @@ class_name GameSave
 
 const SAVE_PATH := "user://save.json"
 const _UpgradeCatalog := preload("res://scripts/upgrade_catalog.gd")
+const _PupColors := preload("res://scripts/pup_colors.gd")
 
 var current_level: int = 0
 var total_rescued: int = 0
-var breed: int = 0  # puppy_controller.Breed
+var coat_index: int = 0
 var treat_coins: int = 0
 var equipped: Dictionary = {}
 var owned_accessories: Array[String] = []
@@ -34,7 +35,10 @@ func load_save() -> bool:
 		return false
 	current_level = int(data.get("current_level", 0))
 	total_rescued = int(data.get("total_rescued", 0))
-	breed = clampi(int(data.get("breed", 0)), 0, 2)
+	if data.has("coat_index"):
+		coat_index = _PupColors.clamp_index(int(data.get("coat_index", 0)))
+	else:
+		coat_index = _PupColors.clamp_index(int(data.get("breed", 0)))
 	treat_coins = int(data.get("treat_coins", 0))
 	equipped = _dict_from_variant(data.get("equipped", {}))
 	owned_accessories = _string_array_from(data.get("owned_accessories", []))
@@ -47,7 +51,7 @@ func save_game() -> void:
 	var data := {
 		"current_level": current_level,
 		"total_rescued": total_rescued,
-		"breed": breed,
+		"coat_index": coat_index,
 		"treat_coins": treat_coins,
 		"equipped": equipped.duplicate(),
 		"owned_accessories": owned_accessories.duplicate(),
@@ -61,11 +65,11 @@ func save_game() -> void:
 	f.close()
 
 
-func prepare_new_game(selected_breed: int) -> void:
+func prepare_new_game(selected_coat: int) -> void:
 	current_level = 0
 	total_rescued = 0
 	treat_coins = 0
-	breed = clampi(selected_breed, 0, 2)
+	coat_index = _PupColors.clamp_index(selected_coat)
 	equipped = {}
 	owned_accessories = []
 	owned_upgrades = []
@@ -81,9 +85,9 @@ func prepare_continue() -> void:
 	boot_new_game = false
 
 
-func prepare_test_maze(selected_breed: int) -> void:
+func prepare_test_maze(selected_coat: int) -> void:
 	current_level = 0
-	breed = clampi(selected_breed, 0, 2)
+	coat_index = _PupColors.clamp_index(selected_coat)
 	boot_test_mode = true
 	boot_new_game = false
 
@@ -116,6 +120,23 @@ func owns_accessory(id: String) -> bool:
 
 
 func owns_upgrade(id: String) -> bool:
+	return upgrade_maxed(id)
+
+
+func upgrade_stack_count(id: String) -> int:
+	var n := 0
+	for uid: String in owned_upgrades:
+		if uid == id:
+			n += 1
+	return n
+
+
+func upgrade_maxed(id: String) -> bool:
+	var entry: Dictionary = _UpgradeCatalog.get_entry(id)
+	if entry.is_empty():
+		return true
+	if entry.get("stackable", false):
+		return upgrade_stack_count(id) >= int(entry.get("max_stacks", 1))
 	return owned_upgrades.has(id)
 
 
@@ -127,7 +148,7 @@ func unlock_accessory(id: String) -> bool:
 
 
 func unlock_upgrade(id: String) -> bool:
-	if id == "" or owned_upgrades.has(id):
+	if id == "" or upgrade_maxed(id):
 		return false
 	owned_upgrades.append(id)
 	return true
@@ -142,6 +163,22 @@ func equip_accessory(slot: String, id: String) -> void:
 
 func get_equipped(slot: String) -> String:
 	return str(equipped.get(slot, ""))
+
+
+func has_rainbow_trail() -> bool:
+	return owns_upgrade("rainbow_trail")
+
+
+func has_exit_roundup() -> bool:
+	return owns_upgrade("pup_roundup")
+
+
+func get_upgrade_flag(effect: String) -> bool:
+	for uid: String in owned_upgrades:
+		var entry: Dictionary = _UpgradeCatalog.get_entry(uid)
+		if entry.get("effect", "") == effect:
+			return true
+	return false
 
 
 func get_upgrade_value(effect: String, default: float = 0.0) -> float:

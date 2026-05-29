@@ -112,11 +112,15 @@ func _build_shop_tab() -> void:
 	_add_section_header("Upgrades")
 	for entry: Dictionary in UpgradeCatalogScript.all():
 		var id: String = entry.get("id", "")
-		var owned: bool = _save.owns_upgrade(id)
+		var maxed: bool = _save.upgrade_maxed(id)
+		var stacks: int = _save.upgrade_stack_count(id)
+		var stack_note := ""
+		if entry.get("stackable", false) and int(entry.get("max_stacks", 1)) > 1:
+			stack_note = " [%d/%d]" % [stacks, int(entry.get("max_stacks", 1))]
 		var row := _shop_row(
-			"%s (%d) — %s" % [entry.get("name", id), int(entry.get("cost", 0)), entry.get("description", "")],
-			"Owned" if owned else "Buy",
-			owned,
+			"%s (%d) — %s%s" % [entry.get("name", id), int(entry.get("cost", 0)), entry.get("description", ""), stack_note],
+			"Maxed" if maxed else "Buy",
+			maxed,
 			func(): purchase_requested.emit("upgrade", id)
 		)
 		_content.add_child(row)

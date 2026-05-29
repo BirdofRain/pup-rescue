@@ -1,14 +1,9 @@
 # scripts/puppy_controller.gd
 extends CharacterBody3D
 
-enum Breed { HUSKY, LABRADOR, PITBULL }
+const PupColorsScript := preload("res://scripts/pup_colors.gd")
 
-const BREED_MESH_PATHS: Dictionary = {
-	Breed.HUSKY: "res://assets/VoxelHusky.obj",
-	Breed.LABRADOR: "res://assets/VoxelLabrador.obj",
-	Breed.PITBULL: "res://assets/VoxelPitbull.obj",
-}
-@export var breed: Breed = Breed.HUSKY
+@export var coat_index: int = 0
 @export var speed: float = 6.0
 @export var accel: float = 20.0
 @export var rotate_speed: float = 12.0
@@ -20,6 +15,7 @@ const BREED_MESH_PATHS: Dictionary = {
 @export var collision_radius: float = 0.22
 @export var collision_height: float = 0.45
 @export var model_ground_offset: float = 0.0
+@export var model_scale: float = 0.65
 
 @export var debug_enabled: bool = true
 @export var debug_log_target: bool = false
@@ -32,6 +28,7 @@ var target_point: Vector3 = Vector3.ZERO
 var has_target: bool = false
 
 var _nav: MazeNav
+var _mesh_loaded: bool = false
 
 
 func _ready() -> void:
@@ -41,8 +38,9 @@ func _ready() -> void:
 	max_slides = 4
 	var save := get_node_or_null("/root/SaveGame") as GameSave
 	if save:
-		breed = clampi(save.breed, 0, 2) as Breed
-	_apply_breed_mesh()
+		set_coat_index(save.coat_index)
+	else:
+		_apply_coat_mesh()
 	_apply_collision_shape()
 	snap_to_floor()
 
@@ -71,13 +69,46 @@ func set_door_blocking(blocked: bool, world_pos: Vector3 = Vector3.ZERO) -> void
 		set_dynamic_blockers([])
 
 
-func _apply_breed_mesh() -> void:
+func set_coat_index(index: int) -> void:
+	coat_index = PupColorsScript.clamp_index(index)
+	_apply_coat_mesh()
+
+
+func get_model_node() -> MeshInstance3D:
+	return model
+
+
+func _apply_coat_mesh() -> void:
 	if model == null:
 		return
-	var mesh_path: String = BREED_MESH_PATHS[breed]
-	var mesh_res: Mesh = load(mesh_path) as Mesh
-	if mesh_res != null:
-		model.mesh = mesh_res
+	if not _mesh_loaded:
+		var mesh_res: Mesh = load(PupColorsScript.MESH_PATH) as Mesh
+		if mesh_res != null:
+			model.mesh = mesh_res
+			_mesh_loaded = true
+	model.scale = Vector3.ONE * model_scale
+	var mat := _make_coat_material(PupColorsScript.get_color(coat_index))
+	_apply_model_material(mat)
+
+
+func _make_coat_material(color: Color) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness = 0.85
+	mat.metallic = 0.0
+	mat.emission_enabled = true
+	mat.emission = color * 0.22
+	return mat
+
+
+func _apply_model_material(mat: StandardMaterial3D) -> void:
+	if model == null:
+		return
+	model.material_override = mat
+	if model.mesh == null:
+		return
+	for i in range(model.mesh.get_surface_count()):
+		model.set_surface_override_material(i, mat)
 
 
 func _capsule_half_height() -> float:
@@ -146,9 +177,17 @@ func _physics_process(delta: float) -> void:
 		velocity = (global_position - prev_pos) / delta
 	velocity.y = 0.0
 
-	var flat_v: Vector3 = velocity
-	if flat_v.length() > 0.12:
-		var desired_basis: Basis = Basis.looking_at(flat_v.normalized(), Vector3.UP)
-		global_basis = global_basis.slerp(desired_basis, rotate_speed * delta)
-
-
+	if model == null:
+		return
+	var face_dir: Vector3 = Vector3.ZERO
+	if has_target:
+		face_dir = target_point - global_position
+		face_dir.y = 0.0
+	else:
+		var flat_v: Vector3 = velocity
+		flat_v.y = 0.0
+		if flat_v.length() > 0.12:
+			face_dir = flat_v
+	if face_dir.length() > 0.01:
+		var target_yaw: float = atan2(face_dir.x, face_dir.z) + PupColorsScript.MODEL_YAW_OFFSET
+		model.rotation.y = lerp_angle(model.rotation.y, target_yaw, rotate_speed * delta)

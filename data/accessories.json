@@ -1,8 +1,14 @@
 [
   {"id": "bow_red", "slot": "hat", "name": "Red Bow", "cost": 25, "shape": "bow", "color": "#E85D5D", "offset": [0, 0.42, 0], "scale": 0.18},
   {"id": "cap_blue", "slot": "hat", "name": "Blue Cap", "cost": 30, "shape": "cap", "color": "#4A7FD4", "offset": [0, 0.44, 0], "scale": 0.2},
+  {"id": "beanie_orange", "slot": "hat", "name": "Orange Beanie", "cost": 28, "shape": "cap", "color": "#E8883A", "offset": [0, 0.46, 0], "scale": 0.19},
+  {"id": "goggles_silver", "slot": "hat", "name": "Silver Goggles", "cost": 32, "shape": "goggles", "color": "#B8C4D0", "offset": [0, 0.38, 0.06], "scale": 0.16},
   {"id": "bandana_green", "slot": "collar", "name": "Green Bandana", "cost": 20, "shape": "bandana", "color": "#4CAF6A", "offset": [0, 0.28, 0.08], "scale": 0.22},
   {"id": "star_gold", "slot": "collar", "name": "Gold Star Pin", "cost": 35, "shape": "star_pin", "color": "#E8C547", "offset": [0, 0.3, 0.1], "scale": 0.12},
+  {"id": "bowtie_teal", "slot": "collar", "name": "Teal Bowtie", "cost": 22, "shape": "bow", "color": "#3AAFA9", "offset": [0, 0.27, 0.1], "scale": 0.14},
+  {"id": "patch_heart", "slot": "collar", "name": "Heart Patch", "cost": 26, "shape": "star_pin", "color": "#E8506A", "offset": [0, 0.29, 0.12], "scale": 0.14},
+  {"id": "scarf_purple", "slot": "collar", "name": "Purple Scarf", "cost": 28, "shape": "bandana", "color": "#9B6BD4", "offset": [0, 0.26, 0.06], "scale": 0.24},
   {"id": "pack_pink", "slot": "pack", "name": "Pink Backpack", "cost": 40, "shape": "backpack_box", "color": "#E878A8", "offset": [0, 0.32, -0.14], "scale": 0.2},
-  {"id": "scarf_purple", "slot": "collar", "name": "Purple Scarf", "cost": 28, "shape": "bandana", "color": "#9B6BD4", "offset": [0, 0.26, 0.06], "scale": 0.24}
+  {"id": "saddle_brown", "slot": "pack", "name": "Brown Saddle Pack", "cost": 38, "shape": "backpack_box", "color": "#8B5E3C", "offset": [0, 0.34, -0.16], "scale": 0.24},
+  {"id": "tail_ribbon", "slot": "pack", "name": "Tail Ribbon", "cost": 24, "shape": "bandana", "color": "#FF6688", "offset": [0, 0.22, -0.18], "scale": 0.18}
 ]
