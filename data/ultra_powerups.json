@@ -1,0 +1,6 @@
+[
+  {"id": "magnet_leash", "name": "Magnet Leash", "duration": 20.0, "color": "#FF6B9D", "effect": "follower_speed", "value": 1.4},
+  {"id": "golden_nose", "name": "Golden Nose", "duration": 15.0, "color": "#FFD700", "effect": "reveal_rescue", "value": 1},
+  {"id": "bubble_paw", "name": "Bubble Paw", "duration": 999.0, "color": "#88DDFF", "effect": "bubble_bump", "value": 1},
+  {"id": "rainbow_trail", "name": "Rainbow Trail", "duration": 30.0, "color": "#FF88CC", "effect": "rainbow_trail", "value": 1}
+]

@@ -6,10 +6,10 @@ class_name LevelData
 static func make_micro_test_level() -> PackedStringArray:
 	var arr: PackedStringArray = [
 		"###########",
-		"#S F # B E#",
-		"# ## # ####",
+		"#SFC# B E#",
+		"# ##U# ####",
 		"# KPGPP   #",
-		"# R  PP   #",
+		"# R A PP  #",
 		"###########",
 	]
 	return arr

@@ -30,6 +30,9 @@ const CP_P: int = 80     # 'P'
 const CP_G: int = 71     # 'G'
 const CP_F: int = 70     # 'F'
 const CP_B: int = 66     # 'B'
+const CP_C: int = 67     # 'C'
+const CP_A: int = 65     # 'A'
+const CP_U: int = 85     # 'U'
 
 # Dark, high-contrast wall colors (readable on light checker floor).
 const WALL_PALETTE: Array[Color] = [
@@ -59,6 +62,9 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D, level_index: 
 		"pen_cells": [],
 		"fruit": [],
 		"double_boost": [],
+		"coins": [],
+		"accessories": [],
+		"ultra": [],
 	}
 
 	clear_children(maze_root)
@@ -87,6 +93,9 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D, level_index: 
 				CP_G: info.pen_gate = pos
 				CP_F: info.fruit.append(pos)
 				CP_B: info.double_boost.append(pos)
+				CP_C: info.coins.append(pos)
+				CP_A: info.accessories.append(pos)
+				CP_U: info.ultra.append(pos)
 				_: pass
 
 	if info.pen_cells.size() > 0:

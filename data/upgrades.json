@@ -1,0 +1,6 @@
+[
+  {"id": "speed_1", "name": "Speed Boost I", "cost": 40, "description": "+8% base move speed", "effect": "speed_mult", "value": 1.08},
+  {"id": "squad_1", "name": "Bigger Squad", "cost": 60, "description": "+4 max followers", "effect": "max_followers", "value": 4},
+  {"id": "boost_plus", "name": "Longer Boost", "cost": 35, "description": "+2s speed boost duration", "effect": "speed_boost_duration", "value": 2.0},
+  {"id": "coin_magnet", "name": "Coin Finder", "cost": 50, "description": "+1 coin per rescue", "effect": "coin_per_rescue", "value": 1}
+]

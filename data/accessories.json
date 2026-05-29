@@ -1,0 +1,8 @@
+[
+  {"id": "bow_red", "slot": "hat", "name": "Red Bow", "cost": 25, "shape": "bow", "color": "#E85D5D", "offset": [0, 0.42, 0], "scale": 0.18},
+  {"id": "cap_blue", "slot": "hat", "name": "Blue Cap", "cost": 30, "shape": "cap", "color": "#4A7FD4", "offset": [0, 0.44, 0], "scale": 0.2},
+  {"id": "bandana_green", "slot": "collar", "name": "Green Bandana", "cost": 20, "shape": "bandana", "color": "#4CAF6A", "offset": [0, 0.28, 0.08], "scale": 0.22},
+  {"id": "star_gold", "slot": "collar", "name": "Gold Star Pin", "cost": 35, "shape": "star_pin", "color": "#E8C547", "offset": [0, 0.3, 0.1], "scale": 0.12},
+  {"id": "pack_pink", "slot": "pack", "name": "Pink Backpack", "cost": 40, "shape": "backpack_box", "color": "#E878A8", "offset": [0, 0.32, -0.14], "scale": 0.2},
+  {"id": "scarf_purple", "slot": "collar", "name": "Purple Scarf", "cost": 28, "shape": "bandana", "color": "#9B6BD4", "offset": [0, 0.26, 0.06], "scale": 0.24}
+]

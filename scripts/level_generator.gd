@@ -19,6 +19,9 @@ class_name LevelGenerator
 #   G pen gate (post-process)
 #   F speed boost (common powerup)
 #   B double-rescue boost (uncommon powerup)
+#   C treat coin pickup
+#   A accessory pickup
+#   U ultra powerup
 #   R rescue pup marker (optional)
 
 const DIRS: Array[Vector2i] = [
@@ -130,6 +133,9 @@ func generate_level(level_index: int, cells_w: int, cells_h: int, with_key_door:
 
 	_place_speed_pickups(rng, level_index, far1)
 	_place_double_boost_pickups(rng, level_index, far1)
+	_place_coin_pickups(rng, level_index, far1)
+	_place_accessory_pickups(rng, level_index, far1)
+	_place_ultra_pickups(rng, level_index, far1)
 	if level_index > 0:
 		_place_rescue_markers(rng, level_index, far1)
 
@@ -283,6 +289,58 @@ func _place_rescue_markers(rng: RandomNumberGenerator, level_index: int, start: 
 	var rescue_count: int = _rescue_marker_count(level_index, rng)
 	var positions: Array[Vector2i] = _pick_corner_floor_tiles(rescue_count, start, rng, 4)
 	_place_tiles_at(positions, "R")
+
+
+func _coin_pickup_count(level_index: int, rng: RandomNumberGenerator) -> int:
+	if level_index == 0:
+		return rng.randi_range(1, 2)
+	if level_index <= 2:
+		return rng.randi_range(2, 3)
+	return rng.randi_range(2, 4)
+
+
+func _accessory_pickup_count(level_index: int, rng: RandomNumberGenerator) -> int:
+	if level_index == 0:
+		return 0
+	if level_index <= 2:
+		return 1
+	return rng.randi_range(1, 2)
+
+
+func _ultra_pickup_count(level_index: int, rng: RandomNumberGenerator) -> int:
+	if level_index < 3:
+		return 0
+	return rng.randi_range(0, 1)
+
+
+func _place_coin_pickups(rng: RandomNumberGenerator, level_index: int, _start: Vector2i) -> void:
+	var candidates: Array[Vector2i] = _collect_floor_tiles()
+	if candidates.size() < 4:
+		return
+	var count: int = _coin_pickup_count(level_index, rng)
+	for _i in range(count):
+		if candidates.is_empty():
+			break
+		var pick: int = rng.randi_range(0, candidates.size() - 1)
+		var pos: Vector2i = candidates[pick]
+		candidates.remove_at(pick)
+		_set_tile(pos.x, pos.y, "C")
+
+
+func _place_accessory_pickups(rng: RandomNumberGenerator, level_index: int, start: Vector2i) -> void:
+	var count: int = _accessory_pickup_count(level_index, rng)
+	if count <= 0:
+		return
+	var positions: Array[Vector2i] = _pick_corner_floor_tiles(count, start, rng, 5)
+	_place_tiles_at(positions, "A")
+
+
+func _place_ultra_pickups(rng: RandomNumberGenerator, level_index: int, start: Vector2i) -> void:
+	var count: int = _ultra_pickup_count(level_index, rng)
+	if count <= 0:
+		return
+	var positions: Array[Vector2i] = _pick_corner_floor_tiles(count, start, rng, 6)
+	_place_tiles_at(positions, "U")
 
 
 func _place_rescue_pen(path: Array[Vector2i], start: Vector2i, goal: Vector2i) -> bool:

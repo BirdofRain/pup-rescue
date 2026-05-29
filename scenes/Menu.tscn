@@ -58,6 +58,11 @@ text = "Breed:"
 custom_minimum_size = Vector2(160, 36)
 layout_mode = 2
 
+[node name="CoinsLabel" type="Label" parent="Center/Panel/VBox"]
+layout_mode = 2
+text = "Treat Coins: 0"
+horizontal_alignment = 1
+
 [node name="PlayBtn" type="Button" parent="Center/Panel/VBox"]
 custom_minimum_size = Vector2(0, 48)
 layout_mode = 2
@@ -68,6 +73,11 @@ custom_minimum_size = Vector2(0, 48)
 layout_mode = 2
 text = "Continue"
 
+[node name="WardrobeBtn" type="Button" parent="Center/Panel/VBox"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Wardrobe"
+
 [node name="TestBtn" type="Button" parent="Center/Panel/VBox"]
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
@@ -75,4 +85,5 @@ text = "Test Maze"
 
 [connection signal="pressed" from="Center/Panel/VBox/PlayBtn" to="." method="_on_play_pressed"]
 [connection signal="pressed" from="Center/Panel/VBox/ContinueBtn" to="." method="_on_continue_pressed"]
+[connection signal="pressed" from="Center/Panel/VBox/WardrobeBtn" to="." method="_on_wardrobe_pressed"]
 [connection signal="pressed" from="Center/Panel/VBox/TestBtn" to="." method="_on_test_pressed"]

@@ -7,6 +7,8 @@ extends Node3D
 @export var footprint_size: Vector2 = Vector2(0.12, 0.16)
 @export var muddy_color: Color = Color(0.44, 0.34, 0.24, 0.52)
 
+var _rainbow_mode: bool = false
+
 var _prints: Array[MeshInstance3D] = []
 var _last_pos: Vector3 = Vector3.ZERO
 var _has_last: bool = false
@@ -25,6 +27,10 @@ func _ready() -> void:
 	_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_mat.render_priority = 1
+
+
+func set_rainbow_mode(enabled: bool) -> void:
+	_rainbow_mode = enabled
 
 
 func clear() -> void:
@@ -82,7 +88,16 @@ func _spawn_at(pos: Vector3, move_dir: Vector3) -> void:
 	var plane := PlaneMesh.new()
 	plane.size = footprint_size * size_jitter
 	mi.mesh = plane
-	mi.material_override = _mat
+	var mat: StandardMaterial3D
+	if _rainbow_mode:
+		mat = StandardMaterial3D.new()
+		mat.albedo_color = Color.from_hsv(_rng.randf(), 0.65, 0.95, 0.55)
+		mat.roughness = 1.0
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	else:
+		mat = _mat
+	mi.material_override = mat
 	# PlaneMesh default lies flat on XZ — only rotate around Y for heading.
 	mi.rotation = Vector3(0.0, yaw, 0.0)
 	add_child(mi)

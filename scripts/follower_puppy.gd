@@ -5,6 +5,7 @@ const BREED_MESH_PATHS: Array[String] = [
 	"res://assets/VoxelLabrador.obj",
 	"res://assets/VoxelPitbull.obj",
 ]
+const PupAppearanceScript := preload("res://scripts/pup_appearance.gd")
 
 @export var move_speed: float = 6.5
 @export var catchup_distance: float = 0.85
@@ -28,6 +29,7 @@ var _path_index: int = 0
 var _stuck_timer: float = 0.0
 var _last_pos: Vector3 = Vector3.ZERO
 var _mesh: MeshInstance3D
+var _appearance = null
 
 
 func setup(nav: MazeNav, spawn_pos: Vector3, breed_index: int) -> void:
@@ -42,6 +44,14 @@ func setup(nav: MazeNav, spawn_pos: Vector3, breed_index: int) -> void:
 	global_position.y = floor_y
 	_last_pos = global_position
 	_build_mesh(breed_index)
+
+
+func apply_collar(accessory_id: String) -> void:
+	if _appearance == null:
+		_appearance = PupAppearanceScript.new()
+		_appearance.name = "FollowerAppearance"
+		add_child(_appearance)
+	_appearance.apply_collar_only(accessory_id)
 
 
 func rebind_nav(nav: MazeNav, pos: Vector3) -> void:

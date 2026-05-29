@@ -44,6 +44,22 @@ func play_double_boost() -> void:
 	t.timeout.connect(func(): play_tone(820.0, 0.09, -6.0), CONNECT_ONE_SHOT)
 
 
+func play_coin() -> void:
+	play_tone(1200.0, 0.05, -8.0)
+
+
+func play_shop_buy() -> void:
+	play_tone(700.0, 0.07, -6.0)
+	var t := get_tree().create_timer(0.05)
+	t.timeout.connect(func(): play_tone(1050.0, 0.08, -7.0), CONNECT_ONE_SHOT)
+
+
+func play_ultra() -> void:
+	play_tone(400.0, 0.12, -5.0)
+	var t := get_tree().create_timer(0.1)
+	t.timeout.connect(func(): play_tone(900.0, 0.14, -4.0), CONNECT_ONE_SHOT)
+
+
 func play_win() -> void:
 	if _win_playing:
 		return

@@ -15,6 +15,7 @@ const FollowerPuppyScript := preload("res://scripts/follower_puppy.gd")
 @export var wander_radius: float = 0.14
 @export var wander_near_distance: float = 1.2
 
+var _collar_id: String = ""
 var _followers: Array[Node3D] = []
 var _history: Array[Vector3] = []
 var _nav: MazeNav
@@ -50,6 +51,13 @@ func seed_history(pos: Vector3) -> void:
 	_player_idle_time = 0.0
 
 
+func set_collar_accessory(accessory_id: String) -> void:
+	_collar_id = accessory_id
+	for pup: Node3D in _followers:
+		if is_instance_valid(pup):
+			pup.call("apply_collar", accessory_id)
+
+
 func add_follower(spawn_pos: Vector3, breed_index: int = -1) -> bool:
 	if not _active or _parent == null or _nav == null:
 		return false
@@ -66,6 +74,8 @@ func add_follower(spawn_pos: Vector3, breed_index: int = -1) -> bool:
 	var pos := spawn_pos
 	pos.y = _floor_y
 	(pup as Node).call("setup", _nav, pos, breed_index)
+	if _collar_id != "":
+		pup.call("apply_collar", _collar_id)
 	_followers.append(pup)
 	return true
 
@@ -142,7 +152,7 @@ func clear() -> void:
 	_player_idle_time = 0.0
 
 
-func tick(delta: float, player_pos: Vector3, gather_point: Vector3 = Vector3.ZERO) -> void:
+func tick(delta: float, player_pos: Vector3, gather_point: Vector3 = Vector3.ZERO, speed_mult: float = 1.0) -> void:
 	if not _active:
 		return
 	_wander_time += delta
@@ -180,7 +190,7 @@ func tick(delta: float, player_pos: Vector3, gather_point: Vector3 = Vector3.ZER
 			speed_scale = 1.0 + gather_blend * 2.2
 		var wander := _wander_offset(i, target, player_pos)
 		pup.call("set_target", target, wander)
-		pup.call("update_follow", delta, speed_scale)
+		pup.call("update_follow", delta, speed_scale * speed_mult)
 
 
 func _clamp_min_distance_from(target: Vector3, center: Vector3, min_dist: float) -> Vector3:

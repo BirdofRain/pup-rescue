@@ -21,6 +21,13 @@ extends Node3D
 @onready var maze_root: Node3D = $World/MazeRoot
 @onready var puppy: CharacterBody3D = $World/ActorsRoot/Puppy
 
+const PupAppearanceScript := preload("res://scripts/pup_appearance.gd")
+const ShopPanelScript := preload("res://scripts/shop_panel.gd")
+const UltraBuffsScript := preload("res://scripts/ultra_buffs.gd")
+const ProgressionConfigScript := preload("res://scripts/progression_config.gd")
+const AccessoryCatalogScript := preload("res://scripts/accessory_catalog.gd")
+const UpgradeCatalogScript := preload("res://scripts/upgrade_catalog.gd")
+const UltraPowerupCatalogScript := preload("res://scripts/ultra_powerup_catalog.gd")
 const MazeBuilderScript := preload("res://scripts/maze_builder.gd")
 const FootprintTrailScript := preload("res://scripts/footprint_trail.gd")
 const LAYER_PLAYER := 2
@@ -57,6 +64,17 @@ var rescued_this_level: int = 0
 
 var speed_nodes: Array[Node3D] = []
 var double_boost_nodes: Array[Node3D] = []
+var coin_nodes: Array[Node3D] = []
+var accessory_nodes: Array[Node3D] = []
+var ultra_nodes: Array[Node3D] = []
+var _accessory_pickup_ids: Dictionary = {}
+var _ultra_pickup_ids: Dictionary = {}
+var coins_this_level: int = 0
+var _level_coin_awarded: bool = false
+var _last_coin_summary: String = ""
+var ultra_buffs = UltraBuffsScript.new()
+var pup_appearance = null
+var shop_panel = null
 var puppy_base_speed: float = 6.0
 var speed_boost_until_ms: int = 0
 var double_rescue_until_ms: int = 0
@@ -68,6 +86,7 @@ const EXIT_GRACE_MS: int = 1200
 var ui_layer: CanvasLayer = null
 var ui_root: Control = null
 var level_label: Label = null
+var coins_label: Label = null
 var boost_label: Label = null
 var hint_label: Label = null
 var win_panel: Panel = null
@@ -111,6 +130,7 @@ func _apply_boot_settings() -> void:
 		puppy.set("breed", clampi(_save.breed, 0, 2))
 	if puppy.has_method("_apply_breed_mesh"):
 		puppy._apply_breed_mesh()
+	_setup_pup_appearance()
 
 
 func load_level(level_index: int) -> void:
@@ -139,6 +159,9 @@ func load_level(level_index: int) -> void:
 	has_pen = info.get("pen_gate") is Vector3
 	pen_center = _info_vec3(info, "pen_center")
 	rescued_this_level = 0
+	coins_this_level = 0
+	_level_coin_awarded = false
+	ultra_buffs.clear()
 	speed_boost_until_ms = 0
 	double_rescue_until_ms = 0
 	_exit_wait_start_ms = -1
@@ -148,6 +171,9 @@ func load_level(level_index: int) -> void:
 	_spawn_door_if_present(info)
 	_spawn_speed_pickups_if_present(info)
 	_spawn_double_boost_pickups_if_present(info)
+	_spawn_coin_pickups_if_present(info)
+	_spawn_accessory_pickups_if_present(info)
+	_spawn_ultra_pickups_if_present(info)
 	if has_pen:
 		_spawn_pen_gate_if_present(info)
 	if info.has("rescue") and info.rescue.size() > 0:
@@ -157,11 +183,14 @@ func load_level(level_index: int) -> void:
 		puppy.set_maze_data(lines, ts)
 
 	puppy_base_speed = puppy.speed if "speed" in puppy else 6.0
+	_apply_meta_upgrades()
 	puppy.speed = puppy_base_speed
 
 	puppy.global_position = info["start"]
 	if puppy.has_method("snap_to_floor"):
 		puppy.snap_to_floor()
+	_refresh_pup_appearance()
+	_apply_follower_collar()
 
 	if follower_squad != null:
 		follower_squad.rebind_for_level(
@@ -187,6 +216,7 @@ func load_level(level_index: int) -> void:
 		_set_hint("Find the key, open the pen gate, escort pups to the exit!")
 	else:
 		_set_hint("Find the key, open the door, reach the exit.")
+	_update_coins_label()
 
 
 func _physics_process(delta: float) -> void:
@@ -194,13 +224,22 @@ func _physics_process(delta: float) -> void:
 	_try_collect_rescues_near_puppy()
 	_try_collect_speed_near_puppy()
 	_try_collect_double_boost_near_puppy()
+	_try_collect_coin_near_puppy()
+	_try_collect_accessory_near_puppy()
+	_try_collect_ultra_near_puppy()
 	_update_speed_boost()
+	ultra_buffs.tick()
+	if footprint_trail != null and footprint_trail.has_method("set_rainbow_mode"):
+		footprint_trail.set_rainbow_mode(ultra_buffs.wants_rainbow_trail())
+	_update_rescue_reveal()
 	_update_boost_label()
+	_update_coins_label()
 	_try_unlock_door_near_puppy()
 	_try_open_pen_near_puppy()
 	var gather_pos := _exit_gather_point()
 	if follower_squad != null and follower_squad.is_active():
-		follower_squad.tick(delta, puppy.global_position, gather_pos)
+		var ultra_mult: float = ultra_buffs.follower_speed_mult()
+		follower_squad.tick(delta, puppy.global_position, gather_pos, ultra_mult)
 	if footprint_trail != null and puppy != null:
 		footprint_trail.tick(puppy.global_position, puppy.velocity)
 	_try_reach_exit_near_puppy()
@@ -211,6 +250,302 @@ func _update_level_label() -> void:
 		return
 	var name := "Test maze" if test_mode else "Level %d" % (current_level + 1)
 	level_label.text = "%s  |  Rescued: %d total" % [name, _save.total_rescued]
+
+
+func _update_coins_label() -> void:
+	if coins_label == null:
+		return
+	coins_label.text = "Coins: %d (+%d)" % [_save.treat_coins, coins_this_level]
+
+
+func _setup_pup_appearance() -> void:
+	if pup_appearance != null and is_instance_valid(pup_appearance):
+		return
+	pup_appearance = PupAppearanceScript.new()
+	pup_appearance.name = "PupAppearance"
+	if puppy != null:
+		puppy.add_child(pup_appearance)
+
+
+func _refresh_pup_appearance() -> void:
+	_setup_pup_appearance()
+	if pup_appearance != null:
+		pup_appearance.apply_loadout(_save.equipped)
+
+
+func _apply_follower_collar() -> void:
+	if follower_squad == null:
+		return
+	var collar_id: String = _save.get_equipped("collar")
+	if follower_squad.has_method("set_collar_accessory"):
+		follower_squad.set_collar_accessory(collar_id)
+
+
+func _apply_meta_upgrades() -> void:
+	var base: float = 6.0 if not ("speed" in puppy) else float(puppy.get("speed"))
+	puppy_base_speed = base * _save.get_upgrade_mult("speed_mult", 1.0)
+	speed_boost_duration = 10.0 + _save.get_upgrade_value("speed_boost_duration", 0.0)
+	if follower_squad != null:
+		follower_squad.max_followers = 24 + int(_save.get_upgrade_value("max_followers", 0.0))
+	if footprint_trail != null and footprint_trail.has_method("set_rainbow_mode"):
+		footprint_trail.set_rainbow_mode(ultra_buffs.wants_rainbow_trail())
+
+
+func _award_level_coins() -> Dictionary:
+	var breakdown: Dictionary = {}
+	var total: int = 0
+	var base: int = ProgressionConfigScript.COINS_LEVEL_COMPLETE
+	breakdown["complete"] = base
+	total += base
+	var per_rescue: int = ProgressionConfigScript.COINS_PER_RESCUE + int(_save.get_upgrade_value("coin_per_rescue", 0.0))
+	var rescue_coins: int = rescued_this_level * per_rescue
+	breakdown["rescues"] = rescue_coins
+	total += rescue_coins
+	breakdown["pickups"] = coins_this_level
+	total += coins_this_level
+	_save.add_coins(total)
+	_last_coin_summary = "+%d (+%d rescues, +%d found)" % [total, rescue_coins, coins_this_level]
+	return breakdown
+
+
+func _add_coins_this_level(amount: int) -> void:
+	if amount <= 0:
+		return
+	coins_this_level += amount
+	_update_coins_label()
+
+
+func _purchase_shop_item(item_type: String, item_id: String) -> void:
+	match item_type:
+		"accessory":
+			var entry: Dictionary = AccessoryCatalogScript.get_entry(item_id)
+			if entry.is_empty() or _save.owns_accessory(item_id):
+				return
+			var cost: int = int(entry.get("cost", 0))
+			if not _save.spend_coins(cost):
+				_set_hint("Not enough Treat Coins!")
+				return
+			_save.unlock_accessory(item_id)
+			SfxManager.play_shop_buy()
+			_save.save_game()
+		"upgrade":
+			var uentry: Dictionary = UpgradeCatalogScript.get_entry(item_id)
+			if uentry.is_empty() or _save.owns_upgrade(item_id):
+				return
+			var ucost: int = int(uentry.get("cost", 0))
+			if not _save.spend_coins(ucost):
+				_set_hint("Not enough Treat Coins!")
+				return
+			_save.unlock_upgrade(item_id)
+			_apply_meta_upgrades()
+			puppy.speed = puppy_base_speed
+			SfxManager.play_shop_buy()
+			_save.save_game()
+		"equip":
+			var e: Dictionary = AccessoryCatalogScript.get_entry(item_id)
+			if e.is_empty() or not _save.owns_accessory(item_id):
+				return
+			var slot: String = e.get("slot", "")
+			_save.equip_accessory(slot, item_id)
+			_save.save_game()
+			_refresh_pup_appearance()
+			_apply_follower_collar()
+		"equip_clear":
+			_save.equip_accessory(item_id, "")
+			_save.save_game()
+			_refresh_pup_appearance()
+			_apply_follower_collar()
+	if shop_panel != null:
+		shop_panel.refresh()
+
+
+func _spawn_coin_pickups_if_present(info: Dictionary) -> void:
+	coin_nodes.clear()
+	if not info.has("coins"):
+		return
+	for pos: Vector3 in info.coins:
+		var node := _make_marker("CoinMarker", pos + Vector3(0.0, 0.28, 0.0), Color(1.0, 0.85, 0.2), 0.1, 0.18)
+		coin_nodes.append(node)
+		_add_pickup_area(node, 0.36, _on_coin_body_entered)
+
+
+func _spawn_accessory_pickups_if_present(info: Dictionary) -> void:
+	accessory_nodes.clear()
+	_accessory_pickup_ids.clear()
+	if not info.has("accessories"):
+		return
+	var idx := 0
+	for pos: Vector3 in info.accessories:
+		var acc_id: String = AccessoryCatalogScript.random_shop_id(_save.owned_accessories)
+		var entry: Dictionary = AccessoryCatalogScript.get_entry(acc_id)
+		var col: Color = Color.from_string(str(entry.get("color", "#E878A8")), Color(0.9, 0.5, 0.8))
+		var node := _make_marker("AccessoryMarker", pos + Vector3(0.0, 0.34, 0.0), col, 0.13, 0.24)
+		accessory_nodes.append(node)
+		_accessory_pickup_ids[node] = acc_id
+		_add_pickup_area(node, 0.4, _on_accessory_body_entered)
+		idx += 1
+
+
+func _spawn_ultra_pickups_if_present(info: Dictionary) -> void:
+	ultra_nodes.clear()
+	_ultra_pickup_ids.clear()
+	if not info.has("ultra"):
+		return
+	for pos: Vector3 in info.ultra:
+		var ultra_id: String = UltraPowerupCatalogScript.random_id()
+		var entry: Dictionary = UltraPowerupCatalogScript.get_entry(ultra_id)
+		var col: Color = Color.from_string(str(entry.get("color", "#FFD700")), Color(1.0, 0.85, 0.3))
+		var node := _make_marker("UltraMarker", pos + Vector3(0.0, 0.38, 0.0), col, 0.15, 0.28)
+		ultra_nodes.append(node)
+		_ultra_pickup_ids[node] = ultra_id
+		_add_pickup_area(node, 0.44, _on_ultra_body_entered)
+
+
+func _on_coin_body_entered(body: Node) -> void:
+	if body == puppy:
+		_try_collect_coin_near_puppy()
+
+
+func _try_collect_coin_near_puppy() -> void:
+	if puppy == null:
+		return
+	var nearest: Node3D = null
+	var nearest_dist: float = pickup_radius + 1.0
+	for node in coin_nodes:
+		if not is_instance_valid(node):
+			continue
+		var dist: float = _flat_distance(puppy.global_position, node.global_position)
+		if dist <= pickup_radius and dist < nearest_dist:
+			nearest_dist = dist
+			nearest = node
+	if nearest != null:
+		_collect_coin_node(nearest)
+
+
+func _collect_coin_node(node: Node3D) -> void:
+	if node == null or not coin_nodes.has(node):
+		return
+	coin_nodes.erase(node)
+	var burst_pos: Vector3 = node.global_position
+	node.queue_free()
+	_add_coins_this_level(ProgressionConfigScript.COINS_PICKUP_C)
+	SfxManager.play_coin()
+	_burst_at(burst_pos, Color(1.0, 0.88, 0.2))
+	_set_hint("+%d Treat Coins!" % ProgressionConfigScript.COINS_PICKUP_C)
+
+
+func _on_accessory_body_entered(body: Node) -> void:
+	if body == puppy:
+		_try_collect_accessory_near_puppy()
+
+
+func _try_collect_accessory_near_puppy() -> void:
+	if puppy == null:
+		return
+	var nearest: Node3D = null
+	var nearest_dist: float = pickup_radius + 1.0
+	for node in accessory_nodes:
+		if not is_instance_valid(node):
+			continue
+		var dist: float = _flat_distance(puppy.global_position, node.global_position)
+		if dist <= pickup_radius and dist < nearest_dist:
+			nearest_dist = dist
+			nearest = node
+	if nearest != null:
+		_collect_accessory_node(nearest)
+
+
+func _collect_accessory_node(node: Node3D) -> void:
+	if node == null or not accessory_nodes.has(node):
+		return
+	var acc_id: String = str(_accessory_pickup_ids.get(node, ""))
+	accessory_nodes.erase(node)
+	_accessory_pickup_ids.erase(node)
+	var burst_pos: Vector3 = node.global_position
+	node.queue_free()
+	var entry: Dictionary = AccessoryCatalogScript.get_entry(acc_id)
+	if acc_id == "" or entry.is_empty():
+		return
+	if _save.owns_accessory(acc_id):
+		_add_coins_this_level(ProgressionConfigScript.COINS_DUPLICATE_ACCESSORY)
+		_set_hint("Duplicate! +%d coins" % ProgressionConfigScript.COINS_DUPLICATE_ACCESSORY)
+	else:
+		_save.unlock_accessory(acc_id)
+		var slot: String = entry.get("slot", "")
+		_save.equip_accessory(slot, acc_id)
+		_save.add_coins(ProgressionConfigScript.COINS_FIRST_FIND_BONUS)
+		_refresh_pup_appearance()
+		_apply_follower_collar()
+		_set_hint("New %s equipped!" % entry.get("name", acc_id))
+	_save.save_game()
+	SfxManager.play_shop_buy()
+	_burst_at(burst_pos, Color.from_string(str(entry.get("color", "#E878A8")), Color.PINK))
+
+
+func _on_ultra_body_entered(body: Node) -> void:
+	if body == puppy:
+		_try_collect_ultra_near_puppy()
+
+
+func _try_collect_ultra_near_puppy() -> void:
+	if puppy == null:
+		return
+	var nearest: Node3D = null
+	var nearest_dist: float = pickup_radius + 1.0
+	for node in ultra_nodes:
+		if not is_instance_valid(node):
+			continue
+		var dist: float = _flat_distance(puppy.global_position, node.global_position)
+		if dist <= pickup_radius and dist < nearest_dist:
+			nearest_dist = dist
+			nearest = node
+	if nearest != null:
+		_collect_ultra_node(nearest)
+
+
+func _collect_ultra_node(node: Node3D) -> void:
+	if node == null or not ultra_nodes.has(node):
+		return
+	var ultra_id: String = str(_ultra_pickup_ids.get(node, ""))
+	ultra_nodes.erase(node)
+	_ultra_pickup_ids.erase(node)
+	var burst_pos: Vector3 = node.global_position
+	node.queue_free()
+	var entry: Dictionary = ultra_buffs.apply(ultra_id)
+	if entry.is_empty():
+		return
+	if ultra_buffs.wants_rainbow_trail() and footprint_trail != null:
+		footprint_trail.set_rainbow_mode(true)
+	SfxManager.play_ultra()
+	_burst_at(burst_pos, Color.from_string(str(entry.get("color", "#FFD700")), Color.GOLD))
+	_set_hint("Ultra: %s!" % entry.get("name", ultra_id))
+	_update_boost_label()
+
+
+func _update_rescue_reveal() -> void:
+	if not ultra_buffs.wants_reveal_rescue() or puppy == null:
+		for node in rescue_nodes:
+			if is_instance_valid(node):
+				node.scale = Vector3.ONE
+		return
+	var nearest: Node3D = null
+	var nearest_dist: float = INF
+	for node in rescue_nodes:
+		if not is_instance_valid(node):
+			continue
+		var dist: float = _flat_distance(puppy.global_position, node.global_position)
+		if dist < nearest_dist:
+			nearest_dist = dist
+			nearest = node
+	for node in rescue_nodes:
+		if not is_instance_valid(node):
+			continue
+		if node == nearest:
+			var pulse: float = 1.0 + sin(Time.get_ticks_msec() * 0.008) * 0.15
+			node.scale = Vector3.ONE * pulse
+		else:
+			node.scale = Vector3.ONE
+
 
 
 func fit_floor_to_level(lines: PackedStringArray, tile_size: float, margin_tiles: float = 2.0) -> void:
@@ -615,6 +950,8 @@ func _update_boost_label() -> void:
 		parts.append("Speed: %.1fs" % _speed_boost_seconds_left())
 	if _is_double_rescue_active():
 		parts.append("Double pups: %.1fs" % _double_rescue_seconds_left())
+	for label: String in ultra_buffs.active_labels():
+		parts.append(label)
 	if parts.is_empty():
 		boost_label.visible = false
 		return
@@ -753,6 +1090,10 @@ func _complete_level() -> void:
 	_exit_wait_start_ms = -1
 	if follower_squad != null and follower_squad.is_active():
 		rescued_this_level = maxi(rescued_this_level, follower_squad.count_followers())
+	if not _level_coin_awarded:
+		_award_level_coins()
+		_level_coin_awarded = true
+		_save.save_game()
 	SfxManager.play_win()
 	_burst_at(exit_node.global_position if exit_node else puppy.global_position, Color(0.3, 0.7, 1.0))
 	_show_win_panel()
@@ -834,6 +1175,14 @@ func _build_ui() -> void:
 	level_label.size = Vector2(700, 24)
 	ui_root.add_child(level_label)
 
+	coins_label = Label.new()
+	coins_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	coins_label.offset_top = m + 8
+	coins_label.offset_right = -m
+	coins_label.offset_left = -200
+	coins_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	ui_root.add_child(coins_label)
+
 	boost_label = Label.new()
 	boost_label.visible = false
 	boost_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
@@ -851,21 +1200,32 @@ func _build_ui() -> void:
 	win_panel = Panel.new()
 	win_panel.visible = false
 	win_panel.set_anchors_preset(Control.PRESET_CENTER)
-	win_panel.offset_left = -220
-	win_panel.offset_top = -120
-	win_panel.offset_right = 220
-	win_panel.offset_bottom = 120
+	win_panel.offset_left = -240
+	win_panel.offset_top = -200
+	win_panel.offset_right = 240
+	win_panel.offset_bottom = 200
 	ui_root.add_child(win_panel)
 
 	var win_v := VBoxContainer.new()
-	win_v.position = Vector2(20, 16)
-	win_v.add_theme_constant_override("separation", 12)
+	win_v.set_anchors_preset(Control.PRESET_FULL_RECT)
+	win_v.offset_left = 12
+	win_v.offset_top = 12
+	win_v.offset_right = -12
+	win_v.offset_bottom = -12
+	win_v.add_theme_constant_override("separation", 8)
 	win_panel.add_child(win_v)
 
 	win_label = Label.new()
 	win_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	win_label.custom_minimum_size = Vector2(380, 80)
+	win_label.custom_minimum_size = Vector2(420, 48)
 	win_v.add_child(win_label)
+
+	shop_panel = ShopPanelScript.new()
+	shop_panel.name = "ShopPanel"
+	shop_panel.custom_minimum_size = Vector2(420, 280)
+	shop_panel.setup(_save)
+	shop_panel.purchase_requested.connect(_purchase_shop_item)
+	win_v.add_child(shop_panel)
 
 	var win_btns := HBoxContainer.new()
 	win_btns.add_theme_constant_override("separation", 12)
@@ -875,6 +1235,8 @@ func _build_ui() -> void:
 	win_btns.add_child(next_btn)
 	restart_btn2 = _big_button("Restart", func(): load_level(current_level))
 	win_btns.add_child(restart_btn2)
+	var menu_win_btn := _big_button("Menu", _on_menu_pressed)
+	win_btns.add_child(menu_win_btn)
 
 
 func _big_button(text: String, callback: Callable) -> Button:
@@ -912,8 +1274,12 @@ func _show_win_panel() -> void:
 		elif rescue_total > 0:
 			rescue_line = "\nRescued this level: %d / %d" % [rescued_this_level, rescue_total]
 		win_label.text = "Level %d complete!%s\nTotal rescued: %d" % [
-			current_level + 1, rescue_line, _save.total_rescued + rescued_this_level
+			current_level + 1, rescue_line, _save.total_rescued
 		]
+	if shop_panel:
+		shop_panel.set_summary("Spend Treat Coins below!", _last_coin_summary)
+		shop_panel.refresh()
+	_update_coins_label()
 	_set_hint("")
 
 
@@ -944,8 +1310,17 @@ func _clear_runtime_pickups() -> void:
 		if is_instance_valid(node):
 			node.queue_free()
 	double_boost_nodes.clear()
+	coin_nodes.clear()
+	accessory_nodes.clear()
+	ultra_nodes.clear()
+	_accessory_pickup_ids.clear()
+	_ultra_pickup_ids.clear()
 	speed_boost_until_ms = 0
 	double_rescue_until_ms = 0
+	coins_this_level = 0
+	ultra_buffs.clear()
+	if footprint_trail != null and footprint_trail.has_method("set_rainbow_mode"):
+		footprint_trail.set_rainbow_mode(false)
 	if puppy != null and "speed" in puppy:
 		puppy.speed = puppy_base_speed
 
