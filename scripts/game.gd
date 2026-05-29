@@ -10,7 +10,6 @@ extends Node3D
 @export var door_unlock_radius: float = 1.1
 @export var fruit_speed_multiplier: float = 1.55
 @export var fruit_boost_duration: float = 30.0
-@export var fruit_convert_max: int = 3
 @export var ui_safe_margin: int = 28
 @export var floor_collision_mask: int = 1
 
@@ -22,6 +21,7 @@ extends Node3D
 @onready var puppy: CharacterBody3D = $World/ActorsRoot/Puppy
 
 const MazeBuilderScript := preload("res://scripts/maze_builder.gd")
+const FootprintTrailScript := preload("res://scripts/footprint_trail.gd")
 const LAYER_PLAYER := 2
 
 var cam: Camera3D
@@ -48,6 +48,7 @@ var pen_gate_area: Area3D = null
 var pen_opened: bool = false
 var pen_center: Vector3 = Vector3.ZERO
 var follower_squad: FollowerSquad = null
+var footprint_trail: Node3D = null
 
 var rescue_nodes: Array[Node3D] = []
 var rescue_total: int = 0
@@ -90,6 +91,9 @@ func _ready() -> void:
 	follower_squad = FollowerSquad.new()
 	follower_squad.name = "FollowerSquad"
 	add_child(follower_squad)
+	footprint_trail = FootprintTrailScript.new()
+	footprint_trail.name = "FootprintTrail"
+	$World.add_child(footprint_trail)
 	set_physics_process(true)
 	load_level(_save.current_level)
 
@@ -187,6 +191,8 @@ func _physics_process(delta: float) -> void:
 	var gather_pos := _exit_gather_point()
 	if follower_squad != null and follower_squad.is_active():
 		follower_squad.tick(delta, puppy.global_position, gather_pos)
+	if footprint_trail != null and puppy != null:
+		footprint_trail.tick(puppy.global_position, puppy.velocity)
 	_try_reach_exit_near_puppy()
 
 
@@ -321,10 +327,21 @@ func _spawn_fruit_if_present(info: Dictionary) -> void:
 	fruit_nodes.clear()
 	if not info.has("fruit"):
 		return
+	var fruit_scale: float = _fruit_marker_scale(current_level)
 	for pos: Vector3 in info.fruit:
-		var node := _make_marker("FruitMarker", pos + Vector3(0.0, 0.32, 0.0), Color(0.95, 0.35, 0.15), 0.11, 0.22)
+		var node := _make_marker(
+			"FruitMarker",
+			pos + Vector3(0.0, 0.32 * fruit_scale, 0.0),
+			Color(0.95, 0.35, 0.15),
+			0.11 * fruit_scale,
+			0.22 * fruit_scale
+		)
 		fruit_nodes.append(node)
-		_add_pickup_area(node, 0.38, _on_fruit_body_entered)
+		_add_pickup_area(node, 0.38 * fruit_scale, _on_fruit_body_entered)
+
+
+func _fruit_marker_scale(level_index: int) -> float:
+	return 1.0 + clampf(float(level_index) * 0.14, 0.0, 1.0)
 
 
 func _make_marker(marker_name: String, pos: Vector3, color: Color, radius: float, height: float, box: bool = false) -> Node3D:
@@ -424,9 +441,17 @@ func _on_rescue_body_entered(body: Node) -> void:
 func _try_collect_rescues_near_puppy() -> void:
 	if puppy == null:
 		return
+	var nearest: Node3D = null
+	var nearest_dist: float = pickup_radius + 1.0
 	for node in rescue_nodes:
-		if is_instance_valid(node) and _near(puppy.global_position, node.global_position):
-			_collect_rescue_node(node)
+		if not is_instance_valid(node):
+			continue
+		var dist: float = _flat_distance(puppy.global_position, node.global_position)
+		if dist <= pickup_radius and dist < nearest_dist:
+			nearest_dist = dist
+			nearest = node
+	if nearest != null:
+		_collect_rescue_node(nearest)
 
 
 func _collect_rescue_node(node: Node3D) -> void:
@@ -454,9 +479,17 @@ func _on_fruit_body_entered(body: Node) -> void:
 func _try_collect_fruit_near_puppy() -> void:
 	if puppy == null:
 		return
-	for node in fruit_nodes.duplicate():
-		if is_instance_valid(node) and _near(puppy.global_position, node.global_position):
-			_collect_fruit_node(node)
+	var nearest: Node3D = null
+	var nearest_dist: float = pickup_radius + 1.0
+	for node in fruit_nodes:
+		if not is_instance_valid(node):
+			continue
+		var dist: float = _flat_distance(puppy.global_position, node.global_position)
+		if dist <= pickup_radius and dist < nearest_dist:
+			nearest_dist = dist
+			nearest = node
+	if nearest != null:
+		_collect_fruit_node(nearest)
 
 
 func _collect_fruit_node(node: Node3D) -> void:
@@ -468,15 +501,10 @@ func _collect_fruit_node(node: Node3D) -> void:
 
 	rescued_this_level += 1
 	_apply_fruit_speed_boost()
-	_convert_rescues_to_followers()
 	SfxManager.play_fruit()
 	_burst_at(burst_pos, Color(0.95, 0.55, 0.1))
 	_update_level_label()
-
-	var hint := "Treat! Speed boost + double pup spawns for %.0fs." % fruit_boost_duration
-	if follower_squad != null and follower_squad.is_active():
-		hint = "Treat active! Pups follow you — bring them to the exit."
-	_set_hint(hint)
+	_set_hint("Treat! Speed boost + double pup spawns for %.0fs." % fruit_boost_duration)
 
 
 func _apply_fruit_speed_boost() -> void:
@@ -552,24 +580,6 @@ func _spawn_followers_at(world_pos: Vector3) -> int:
 		if follower_squad.add_follower(world_pos + offset):
 			spawned += 1
 	return spawned
-
-
-func _convert_rescues_to_followers() -> void:
-	if rescue_nodes.is_empty() or puppy == null or follower_squad == null:
-		return
-	if not _ensure_follower_squad_active():
-		return
-	var converted := 0
-	while converted < fruit_convert_max and not rescue_nodes.is_empty():
-		var marker: Node3D = rescue_nodes[0]
-		rescue_nodes.remove_at(0)
-		var spawn_pos: Vector3 = marker.global_position if is_instance_valid(marker) else puppy.global_position
-		if is_instance_valid(marker):
-			marker.queue_free()
-		if _spawn_followers_at(spawn_pos) > 0:
-			converted += 1
-		else:
-			break
 
 
 func _on_door_body_entered(body: Node) -> void:
@@ -668,11 +678,15 @@ func _info_vec3(info: Dictionary, key: StringName) -> Vector3:
 
 
 func _near(a: Vector3, b: Vector3) -> bool:
+	return _flat_distance(a, b) <= pickup_radius
+
+
+func _flat_distance(a: Vector3, b: Vector3) -> float:
 	var pa := a
 	var pb := b
 	pa.y = 0.0
 	pb.y = 0.0
-	return pa.distance_to(pb) <= pickup_radius
+	return pa.distance_to(pb)
 
 
 func _burst_at(world_pos: Vector3, color: Color) -> void:
@@ -828,6 +842,8 @@ func _set_hint(msg: String) -> void:
 
 
 func _clear_runtime_pickups() -> void:
+	if footprint_trail != null:
+		footprint_trail.clear()
 	for node in rescue_nodes:
 		if is_instance_valid(node):
 			node.queue_free()

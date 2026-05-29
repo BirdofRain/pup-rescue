@@ -147,9 +147,12 @@ func _place_fruit_pickups(rng: RandomNumberGenerator, level_index: int) -> void:
 			candidates.append(Vector2i(x, y))
 	if candidates.size() < 4:
 		return
-	var fruit_count: int = rng.randi_range(0, 2)
+	var fruit_count: int
 	if level_index == 0:
-		fruit_count = mini(fruit_count, 1)
+		fruit_count = rng.randi_range(0, 1)
+	else:
+		var max_fruit: int = mini(2 + level_index / 2, 6)
+		fruit_count = rng.randi_range(1, max_fruit)
 	for _i in range(fruit_count):
 		if candidates.is_empty():
 			break
