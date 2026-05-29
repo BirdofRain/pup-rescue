@@ -165,10 +165,13 @@ func tick(delta: float, player_pos: Vector3, gather_point: Vector3 = Vector3.ZER
 			center.y = _floor_y
 			var ring := _ring_offset(i, count, 0.38)
 			var gather_target: Vector3 = center + ring
-			var effective_spacing: float = lerpf(dist_behind, 0.0, gather_blend)
-			trail_target = _sample_trail(effective_spacing)
-			target = trail_target.lerp(gather_target, gather_blend)
-			speed_scale = 1.0 + gather_blend * 1.8
+			if gathering:
+				target = gather_target
+			else:
+				var effective_spacing: float = lerpf(dist_behind, 0.0, gather_blend)
+				trail_target = _sample_trail(effective_spacing)
+				target = trail_target.lerp(gather_target, gather_blend)
+			speed_scale = 1.0 + gather_blend * 2.2
 		pup.call("set_target", target)
 		pup.call("update_follow", delta, speed_scale)
 

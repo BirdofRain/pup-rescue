@@ -58,6 +58,9 @@ var fruit_nodes: Array[Node3D] = []
 var puppy_base_speed: float = 6.0
 var fruit_speed_boost_until_ms: int = 0
 var level_won: bool = false
+var _exit_wait_start_ms: int = -1
+
+const EXIT_GRACE_MS: int = 1200
 
 var ui_layer: CanvasLayer = null
 var ui_root: Control = null
@@ -134,6 +137,7 @@ func load_level(level_index: int) -> void:
 	pen_center = _info_vec3(info, "pen_center")
 	rescued_this_level = 0
 	fruit_speed_boost_until_ms = 0
+	_exit_wait_start_ms = -1
 
 	_spawn_key_if_present(info)
 	_spawn_exit_if_present(info)
@@ -155,12 +159,7 @@ func load_level(level_index: int) -> void:
 		puppy.snap_to_floor()
 
 	if follower_squad != null:
-		follower_squad.rebind_for_level(
-			puppy.get_nav() if puppy.has_method("get_nav") else null,
-			_follower_floor_y(),
-			$World/ActorsRoot,
-			info["start"]
-		)
+		follower_squad.clear()
 
 	has_last_target = false
 	last_target = Vector3.ZERO
@@ -648,14 +647,20 @@ func _try_reach_exit() -> void:
 		if exit_pos == Vector3.ZERO:
 			return
 		if not _near(puppy.global_position, exit_pos):
+			_exit_wait_start_ms = -1
 			return
-		if not follower_squad.all_gathered_at(exit_pos):
-			var need: int = follower_squad.required_at_exit_count()
-			_set_hint("Waiting for pups to catch up! (%d/%d)" % [
-				follower_squad.count_gathered_at(exit_pos), need
-			])
+		if _exit_wait_start_ms < 0:
+			_exit_wait_start_ms = Time.get_ticks_msec()
+		var gathered: int = follower_squad.count_gathered_at(exit_pos)
+		var total: int = follower_squad.count_followers()
+		var need: int = follower_squad.required_at_exit_count()
+		var elapsed: int = Time.get_ticks_msec() - _exit_wait_start_ms
+		if elapsed < EXIT_GRACE_MS:
+			_set_hint("Waiting for pups to catch up! (%d/%d)" % [gathered, total])
 			return
-		rescued_this_level = follower_squad.count_gathered_at(exit_pos)
+		if gathered < need:
+			_set_hint("Waiting for pups to catch up! (%d/%d)" % [gathered, need])
+			return
 	_complete_level()
 
 
@@ -667,6 +672,10 @@ func _complete_level() -> void:
 	if level_won:
 		return
 	level_won = true
+	_exit_wait_start_ms = -1
+	if follower_squad != null and follower_squad.is_active():
+		rescued_this_level = maxi(rescued_this_level, follower_squad.count_followers())
+		follower_squad.clear()
 	SfxManager.play_win()
 	_burst_at(exit_node.global_position if exit_node else puppy.global_position, Color(0.3, 0.7, 1.0))
 	_show_win_panel()
@@ -821,8 +830,8 @@ func _show_win_panel() -> void:
 		win_panel.visible = true
 	if win_label:
 		var rescue_line := ""
-		if follower_squad != null and follower_squad.is_active():
-			rescue_line = "\nPups at exit: %d" % rescued_this_level
+		if rescued_this_level > 0:
+			rescue_line = "\nPups rescued this level: %d" % rescued_this_level
 		elif rescue_total > 0:
 			rescue_line = "\nRescued this level: %d / %d" % [rescued_this_level, rescue_total]
 		win_label.text = "Level %d complete!%s\nTotal rescued: %d" % [
