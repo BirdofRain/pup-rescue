@@ -38,6 +38,12 @@ func play_fruit() -> void:
 	t.timeout.connect(func(): play_tone(980.0, 0.07, -7.0), CONNECT_ONE_SHOT)
 
 
+func play_double_boost() -> void:
+	play_tone(480.0, 0.1, -6.0)
+	var t := get_tree().create_timer(0.08)
+	t.timeout.connect(func(): play_tone(820.0, 0.09, -6.0), CONNECT_ONE_SHOT)
+
+
 func play_win() -> void:
 	if _win_playing:
 		return

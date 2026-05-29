@@ -17,7 +17,8 @@ class_name LevelGenerator
 #   D door (optional, fallback if pen fails)
 #   P pen floor (post-process)
 #   G pen gate (post-process)
-#   F fruit treat (optional powerup)
+#   F speed boost (common powerup)
+#   B double-rescue boost (uncommon powerup)
 #   R rescue pup marker (optional)
 
 const DIRS: Array[Vector2i] = [
@@ -127,9 +128,10 @@ func generate_level(level_index: int, cells_w: int, cells_h: int, with_key_door:
 				if _tile_is_floor(door_pos.x, door_pos.y):
 					_set_tile(door_pos.x, door_pos.y, "D")
 
-	_place_fruit_pickups(rng, level_index)
+	_place_speed_pickups(rng, level_index, far1)
+	_place_double_boost_pickups(rng, level_index, far1)
 	if level_index > 0:
-		_place_rescue_markers(rng)
+		_place_rescue_markers(rng, level_index, far1)
 
 	# Convert to PackedStringArray
 	var out := PackedStringArray()
@@ -138,22 +140,129 @@ func generate_level(level_index: int, cells_w: int, cells_h: int, with_key_door:
 		out[y] = _rows[y]
 	return out
 
-func _place_fruit_pickups(rng: RandomNumberGenerator, level_index: int) -> void:
-	var candidates: Array[Vector2i] = []
+func _speed_pickup_count(level_index: int, rng: RandomNumberGenerator) -> int:
+	if level_index == 0:
+		return rng.randi_range(1, 2)
+	if level_index <= 2:
+		return rng.randi_range(4, 5)
+	if level_index <= 5:
+		return rng.randi_range(5, 7)
+	return rng.randi_range(6, mini(9, 10))
+
+
+func _double_boost_count(level_index: int, rng: RandomNumberGenerator) -> int:
+	if level_index == 0:
+		return 0
+	if level_index <= 2:
+		return 1
+	if level_index <= 5:
+		return rng.randi_range(1, 2)
+	return rng.randi_range(2, 3)
+
+
+func _rescue_marker_count(level_index: int, rng: RandomNumberGenerator) -> int:
+	if level_index <= 2:
+		return 3
+	if level_index <= 5:
+		return 4
+	return rng.randi_range(5, 6)
+
+
+func _collect_floor_tiles() -> Array[Vector2i]:
+	var tiles: Array[Vector2i] = []
 	for y in range(_tile_h):
 		for x in range(_tile_w):
-			if _get_tile(x, y) != ".".unicode_at(0):
+			if _tile_is_floor(x, y):
+				tiles.append(Vector2i(x, y))
+	return tiles
+
+
+func _quadrant_of(tile: Vector2i) -> int:
+	var cx: int = _tile_w / 2
+	var cz: int = _tile_h / 2
+	var east: bool = tile.x >= cx
+	var south: bool = tile.y >= cz
+	if not east and not south:
+		return 0
+	if east and not south:
+		return 1
+	if not east and south:
+		return 2
+	return 3
+
+
+func _tile_distance(a: Vector2i, b: Vector2i) -> int:
+	return absi(a.x - b.x) + absi(a.y - b.y)
+
+
+func _is_far_enough_from(pos: Vector2i, others: Array[Vector2i], min_sep: int) -> bool:
+	for other: Vector2i in others:
+		if _tile_distance(pos, other) < min_sep:
+			return false
+	return true
+
+
+func _pick_corner_floor_tiles(
+	count: int,
+	start: Vector2i,
+	rng: RandomNumberGenerator,
+	min_sep: int = 4
+) -> Array[Vector2i]:
+	var candidates: Array[Vector2i] = _collect_floor_tiles()
+	if candidates.is_empty():
+		return []
+	var picked: Array[Vector2i] = []
+	var quadrants: Array[int] = [0, 1, 2, 3]
+	for i in range(quadrants.size() - 1, 0, -1):
+		var j: int = rng.randi_range(0, i)
+		var tmp: int = quadrants[i]
+		quadrants[i] = quadrants[j]
+		quadrants[j] = tmp
+	for quad: int in quadrants:
+		if picked.size() >= count:
+			break
+		var best: Vector2i = Vector2i(-1, -1)
+		var best_score: int = -1
+		for tile: Vector2i in candidates:
+			if _quadrant_of(tile) != quad:
 				continue
-			candidates.append(Vector2i(x, y))
+			if not _is_far_enough_from(tile, picked, min_sep):
+				continue
+			var score: int = _tile_distance(tile, start)
+			if score > best_score:
+				best_score = score
+				best = tile
+		if best.x >= 0:
+			picked.append(best)
+			candidates.erase(best)
+	while picked.size() < count and not candidates.is_empty():
+		var best: Vector2i = Vector2i(-1, -1)
+		var best_score: int = -1
+		for tile: Vector2i in candidates:
+			if not _is_far_enough_from(tile, picked, min_sep):
+				continue
+			var score: int = _tile_distance(tile, start)
+			if score > best_score:
+				best_score = score
+				best = tile
+		if best.x < 0:
+			break
+		picked.append(best)
+		candidates.erase(best)
+	return picked
+
+
+func _place_tiles_at(positions: Array[Vector2i], tile_char: String) -> void:
+	for pos: Vector2i in positions:
+		_set_tile(pos.x, pos.y, tile_char)
+
+
+func _place_speed_pickups(rng: RandomNumberGenerator, level_index: int, start: Vector2i) -> void:
+	var candidates: Array[Vector2i] = _collect_floor_tiles()
 	if candidates.size() < 4:
 		return
-	var fruit_count: int
-	if level_index == 0:
-		fruit_count = rng.randi_range(0, 1)
-	else:
-		var max_fruit: int = mini(2 + level_index / 2, 6)
-		fruit_count = rng.randi_range(1, max_fruit)
-	for _i in range(fruit_count):
+	var speed_count: int = _speed_pickup_count(level_index, rng)
+	for _i in range(speed_count):
 		if candidates.is_empty():
 			break
 		var pick: int = rng.randi_range(0, candidates.size() - 1)
@@ -162,23 +271,18 @@ func _place_fruit_pickups(rng: RandomNumberGenerator, level_index: int) -> void:
 		_set_tile(pos.x, pos.y, "F")
 
 
-func _place_rescue_markers(rng: RandomNumberGenerator) -> void:
-	var candidates: Array[Vector2i] = []
-	for y in range(_tile_h):
-		for x in range(_tile_w):
-			if _get_tile(x, y) != ".".unicode_at(0):
-				continue
-			candidates.append(Vector2i(x, y))
-	if candidates.size() < 6:
+func _place_double_boost_pickups(rng: RandomNumberGenerator, level_index: int, start: Vector2i) -> void:
+	var boost_count: int = _double_boost_count(level_index, rng)
+	if boost_count <= 0:
 		return
-	var rescue_count: int = rng.randi_range(1, 2)
-	for _i in range(rescue_count):
-		if candidates.is_empty():
-			break
-		var pick: int = rng.randi_range(0, candidates.size() - 1)
-		var pos: Vector2i = candidates[pick]
-		candidates.remove_at(pick)
-		_set_tile(pos.x, pos.y, "R")
+	var positions: Array[Vector2i] = _pick_corner_floor_tiles(boost_count, start, rng, 5)
+	_place_tiles_at(positions, "B")
+
+
+func _place_rescue_markers(rng: RandomNumberGenerator, level_index: int, start: Vector2i) -> void:
+	var rescue_count: int = _rescue_marker_count(level_index, rng)
+	var positions: Array[Vector2i] = _pick_corner_floor_tiles(rescue_count, start, rng, 4)
+	_place_tiles_at(positions, "R")
 
 
 func _place_rescue_pen(path: Array[Vector2i], start: Vector2i, goal: Vector2i) -> bool:

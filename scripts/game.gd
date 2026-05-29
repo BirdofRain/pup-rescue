@@ -8,8 +8,9 @@ extends Node3D
 @export var randomize_each_load: bool = true
 @export var pickup_radius: float = 0.6
 @export var door_unlock_radius: float = 1.1
-@export var fruit_speed_multiplier: float = 1.55
-@export var fruit_boost_duration: float = 30.0
+@export var speed_boost_multiplier: float = 1.55
+@export var speed_boost_duration: float = 10.0
+@export var double_rescue_duration: float = 30.0
 @export var ui_safe_margin: int = 28
 @export var floor_collision_mask: int = 1
 
@@ -54,9 +55,11 @@ var rescue_nodes: Array[Node3D] = []
 var rescue_total: int = 0
 var rescued_this_level: int = 0
 
-var fruit_nodes: Array[Node3D] = []
+var speed_nodes: Array[Node3D] = []
+var double_boost_nodes: Array[Node3D] = []
 var puppy_base_speed: float = 6.0
-var fruit_speed_boost_until_ms: int = 0
+var speed_boost_until_ms: int = 0
+var double_rescue_until_ms: int = 0
 var level_won: bool = false
 var _exit_wait_start_ms: int = -1
 
@@ -136,13 +139,15 @@ func load_level(level_index: int) -> void:
 	has_pen = info.get("pen_gate") is Vector3
 	pen_center = _info_vec3(info, "pen_center")
 	rescued_this_level = 0
-	fruit_speed_boost_until_ms = 0
+	speed_boost_until_ms = 0
+	double_rescue_until_ms = 0
 	_exit_wait_start_ms = -1
 
 	_spawn_key_if_present(info)
 	_spawn_exit_if_present(info)
 	_spawn_door_if_present(info)
-	_spawn_fruit_if_present(info)
+	_spawn_speed_pickups_if_present(info)
+	_spawn_double_boost_pickups_if_present(info)
 	if has_pen:
 		_spawn_pen_gate_if_present(info)
 	if info.has("rescue") and info.rescue.size() > 0:
@@ -159,7 +164,12 @@ func load_level(level_index: int) -> void:
 		puppy.snap_to_floor()
 
 	if follower_squad != null:
-		follower_squad.clear()
+		follower_squad.rebind_for_level(
+			puppy.get_nav() if puppy.has_method("get_nav") else null,
+			_follower_floor_y(),
+			$World/ActorsRoot,
+			info["start"]
+		)
 
 	has_last_target = false
 	last_target = Vector3.ZERO
@@ -182,8 +192,9 @@ func load_level(level_index: int) -> void:
 func _physics_process(delta: float) -> void:
 	_try_collect_key_near_puppy()
 	_try_collect_rescues_near_puppy()
-	_try_collect_fruit_near_puppy()
-	_update_fruit_speed_boost()
+	_try_collect_speed_near_puppy()
+	_try_collect_double_boost_near_puppy()
+	_update_speed_boost()
 	_update_boost_label()
 	_try_unlock_door_near_puppy()
 	_try_open_pen_near_puppy()
@@ -322,24 +333,41 @@ func _spawn_rescues(info: Dictionary) -> void:
 		_add_pickup_area(node, 0.4, _on_rescue_body_entered)
 
 
-func _spawn_fruit_if_present(info: Dictionary) -> void:
-	fruit_nodes.clear()
+func _spawn_speed_pickups_if_present(info: Dictionary) -> void:
+	speed_nodes.clear()
 	if not info.has("fruit"):
 		return
-	var fruit_scale: float = _fruit_marker_scale(current_level)
+	var marker_scale: float = _powerup_marker_scale(current_level)
 	for pos: Vector3 in info.fruit:
 		var node := _make_marker(
-			"FruitMarker",
-			pos + Vector3(0.0, 0.32 * fruit_scale, 0.0),
+			"SpeedMarker",
+			pos + Vector3(0.0, 0.32 * marker_scale, 0.0),
 			Color(0.95, 0.35, 0.15),
-			0.11 * fruit_scale,
-			0.22 * fruit_scale
+			0.11 * marker_scale,
+			0.22 * marker_scale
 		)
-		fruit_nodes.append(node)
-		_add_pickup_area(node, 0.38 * fruit_scale, _on_fruit_body_entered)
+		speed_nodes.append(node)
+		_add_pickup_area(node, 0.38 * marker_scale, _on_speed_body_entered)
 
 
-func _fruit_marker_scale(level_index: int) -> float:
+func _spawn_double_boost_pickups_if_present(info: Dictionary) -> void:
+	double_boost_nodes.clear()
+	if not info.has("double_boost"):
+		return
+	var marker_scale: float = _powerup_marker_scale(current_level) * 1.12
+	for pos: Vector3 in info.double_boost:
+		var node := _make_marker(
+			"DoubleBoostMarker",
+			pos + Vector3(0.0, 0.34 * marker_scale, 0.0),
+			Color(0.72, 0.38, 0.95),
+			0.13 * marker_scale,
+			0.26 * marker_scale
+		)
+		double_boost_nodes.append(node)
+		_add_pickup_area(node, 0.42 * marker_scale, _on_double_boost_body_entered)
+
+
+func _powerup_marker_scale(level_index: int) -> float:
 	return 1.0 + clampf(float(level_index) * 0.14, 0.0, 1.0)
 
 
@@ -464,23 +492,23 @@ func _collect_rescue_node(node: Node3D) -> void:
 	node.queue_free()
 	_update_level_label()
 	if _spawn_followers_at(spawn_pos) > 0:
-		var extra := " (double treat!)" if _is_fruit_boost_active() else ""
+		var extra := " (double boost!)" if _is_double_rescue_active() else ""
 		_set_hint("Rescued a pup! It follows you — bring it to the exit.%s" % extra)
 	else:
 		_set_hint("Rescued a pup! (%d this level)" % rescued_this_level)
 
 
-func _on_fruit_body_entered(body: Node) -> void:
+func _on_speed_body_entered(body: Node) -> void:
 	if body == puppy:
-		_try_collect_fruit_near_puppy()
+		_try_collect_speed_near_puppy()
 
 
-func _try_collect_fruit_near_puppy() -> void:
+func _try_collect_speed_near_puppy() -> void:
 	if puppy == null:
 		return
 	var nearest: Node3D = null
 	var nearest_dist: float = pickup_radius + 1.0
-	for node in fruit_nodes:
+	for node in speed_nodes:
 		if not is_instance_valid(node):
 			continue
 		var dist: float = _flat_distance(puppy.global_position, node.global_position)
@@ -488,60 +516,110 @@ func _try_collect_fruit_near_puppy() -> void:
 			nearest_dist = dist
 			nearest = node
 	if nearest != null:
-		_collect_fruit_node(nearest)
+		_collect_speed_node(nearest)
 
 
-func _collect_fruit_node(node: Node3D) -> void:
-	if node == null or not fruit_nodes.has(node):
+func _collect_speed_node(node: Node3D) -> void:
+	if node == null or not speed_nodes.has(node):
 		return
-	fruit_nodes.erase(node)
+	speed_nodes.erase(node)
 	var burst_pos: Vector3 = node.global_position
 	node.queue_free()
-
-	rescued_this_level += 1
-	_apply_fruit_speed_boost()
+	_apply_speed_boost()
 	SfxManager.play_fruit()
 	_burst_at(burst_pos, Color(0.95, 0.55, 0.1))
-	_update_level_label()
-	_set_hint("Treat! Speed boost + double pup spawns for %.0fs." % fruit_boost_duration)
+	_set_hint("Speed boost! +%.0fs (stackable)." % speed_boost_duration)
 
 
-func _apply_fruit_speed_boost() -> void:
+func _on_double_boost_body_entered(body: Node) -> void:
+	if body == puppy:
+		_try_collect_double_boost_near_puppy()
+
+
+func _try_collect_double_boost_near_puppy() -> void:
 	if puppy == null:
 		return
-	fruit_speed_boost_until_ms = Time.get_ticks_msec() + int(fruit_boost_duration * 1000.0)
-	puppy.speed = puppy_base_speed * fruit_speed_multiplier
-	_update_boost_label()
+	var nearest: Node3D = null
+	var nearest_dist: float = pickup_radius + 1.0
+	for node in double_boost_nodes:
+		if not is_instance_valid(node):
+			continue
+		var dist: float = _flat_distance(puppy.global_position, node.global_position)
+		if dist <= pickup_radius and dist < nearest_dist:
+			nearest_dist = dist
+			nearest = node
+	if nearest != null:
+		_collect_double_boost_node(nearest)
 
 
-func _update_fruit_speed_boost() -> void:
-	if puppy == null or fruit_speed_boost_until_ms <= 0:
-		_update_boost_label()
+func _collect_double_boost_node(node: Node3D) -> void:
+	if node == null or not double_boost_nodes.has(node):
 		return
-	if Time.get_ticks_msec() >= fruit_speed_boost_until_ms:
-		fruit_speed_boost_until_ms = 0
-		puppy.speed = puppy_base_speed
+	double_boost_nodes.erase(node)
+	var burst_pos: Vector3 = node.global_position
+	node.queue_free()
+	_apply_double_rescue_boost()
+	SfxManager.play_double_boost()
+	_burst_at(burst_pos, Color(0.75, 0.45, 1.0))
+	_set_hint("Double pup boost! Two spawns per rescue for %.0fs." % double_rescue_duration)
+
+
+func _apply_speed_boost() -> void:
+	if puppy == null:
+		return
+	var now: int = Time.get_ticks_msec()
+	var remaining_ms: int = maxi(0, speed_boost_until_ms - now)
+	speed_boost_until_ms = now + remaining_ms + int(speed_boost_duration * 1000.0)
+	puppy.speed = puppy_base_speed * speed_boost_multiplier
 	_update_boost_label()
 
 
-func _is_fruit_boost_active() -> bool:
-	return fruit_speed_boost_until_ms > 0 and Time.get_ticks_msec() < fruit_speed_boost_until_ms
+func _apply_double_rescue_boost() -> void:
+	double_rescue_until_ms = Time.get_ticks_msec() + int(double_rescue_duration * 1000.0)
+	_update_boost_label()
 
 
-func _fruit_boost_seconds_left() -> float:
-	if not _is_fruit_boost_active():
+func _update_speed_boost() -> void:
+	if puppy == null or speed_boost_until_ms <= 0:
+		return
+	if Time.get_ticks_msec() >= speed_boost_until_ms:
+		speed_boost_until_ms = 0
+		puppy.speed = puppy_base_speed
+
+
+func _is_speed_boost_active() -> bool:
+	return speed_boost_until_ms > 0 and Time.get_ticks_msec() < speed_boost_until_ms
+
+
+func _is_double_rescue_active() -> bool:
+	return double_rescue_until_ms > 0 and Time.get_ticks_msec() < double_rescue_until_ms
+
+
+func _speed_boost_seconds_left() -> float:
+	if not _is_speed_boost_active():
 		return 0.0
-	return float(fruit_speed_boost_until_ms - Time.get_ticks_msec()) / 1000.0
+	return float(speed_boost_until_ms - Time.get_ticks_msec()) / 1000.0
+
+
+func _double_rescue_seconds_left() -> float:
+	if not _is_double_rescue_active():
+		return 0.0
+	return float(double_rescue_until_ms - Time.get_ticks_msec()) / 1000.0
 
 
 func _update_boost_label() -> void:
 	if boost_label == null:
 		return
-	if _is_fruit_boost_active():
-		boost_label.visible = true
-		boost_label.text = "Treat boost: %.1fs  |  Double pup spawns!" % _fruit_boost_seconds_left()
-	else:
+	var parts: PackedStringArray = PackedStringArray()
+	if _is_speed_boost_active():
+		parts.append("Speed: %.1fs" % _speed_boost_seconds_left())
+	if _is_double_rescue_active():
+		parts.append("Double pups: %.1fs" % _double_rescue_seconds_left())
+	if parts.is_empty():
 		boost_label.visible = false
+		return
+	boost_label.visible = true
+	boost_label.text = "  |  ".join(parts)
 
 
 func _follower_floor_y() -> float:
@@ -568,7 +646,7 @@ func _spawn_followers_at(world_pos: Vector3) -> int:
 	var spawned := 0
 	if follower_squad.add_follower(world_pos):
 		spawned += 1
-	if _is_fruit_boost_active():
+	if _is_double_rescue_active():
 		var rng := RandomNumberGenerator.new()
 		rng.randomize()
 		var offset := Vector3(
@@ -675,7 +753,6 @@ func _complete_level() -> void:
 	_exit_wait_start_ms = -1
 	if follower_squad != null and follower_squad.is_active():
 		rescued_this_level = maxi(rescued_this_level, follower_squad.count_followers())
-		follower_squad.clear()
 	SfxManager.play_win()
 	_burst_at(exit_node.global_position if exit_node else puppy.global_position, Color(0.3, 0.7, 1.0))
 	_show_win_panel()
@@ -859,10 +936,16 @@ func _clear_runtime_pickups() -> void:
 	rescue_nodes.clear()
 	rescue_total = 0
 
-	for node in fruit_nodes:
+	for node in speed_nodes:
 		if is_instance_valid(node):
 			node.queue_free()
-	fruit_nodes.clear()
+	speed_nodes.clear()
+	for node in double_boost_nodes:
+		if is_instance_valid(node):
+			node.queue_free()
+	double_boost_nodes.clear()
+	speed_boost_until_ms = 0
+	double_rescue_until_ms = 0
 	if puppy != null and "speed" in puppy:
 		puppy.speed = puppy_base_speed
 

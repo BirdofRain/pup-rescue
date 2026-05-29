@@ -3,14 +3,17 @@ extends Node
 
 const FollowerPuppyScript := preload("res://scripts/follower_puppy.gd")
 
-@export var max_followers: int = 6
+@export var max_followers: int = 24
 @export var follow_spacing: float = 0.95
 @export var min_history_step: float = 0.04
-@export var max_history: int = 240
+@export var max_history: int = 480
 @export var exit_radius: float = 0.65
 @export var gather_radius: float = 1.15
 @export var player_still_threshold: float = 0.06
-@export var gather_blend_time: float = 0.9
+@export var gather_blend_time: float = 1.2
+@export var min_player_clearance: float = 0.55
+@export var wander_radius: float = 0.14
+@export var wander_near_distance: float = 1.2
 
 var _followers: Array[Node3D] = []
 var _history: Array[Vector3] = []
@@ -21,6 +24,7 @@ var _active: bool = false
 var _player_idle_time: float = 0.0
 var _last_player_pos: Vector3 = Vector3.ZERO
 var _has_last_player_pos: bool = false
+var _wander_time: float = 0.0
 
 
 func is_active() -> bool:
@@ -141,6 +145,7 @@ func clear() -> void:
 func tick(delta: float, player_pos: Vector3, gather_point: Vector3 = Vector3.ZERO) -> void:
 	if not _active:
 		return
+	_wander_time += delta
 	_update_player_idle(player_pos, delta)
 	_record_player(player_pos)
 	if _history.is_empty():
@@ -156,9 +161,7 @@ func tick(delta: float, player_pos: Vector3, gather_point: Vector3 = Vector3.ZER
 		var pup: Node3D = _followers[i]
 		if not is_instance_valid(pup):
 			continue
-		var dist_behind: float = (float(i) + 1.0) * follow_spacing
-		var trail_target: Vector3 = _sample_trail(dist_behind)
-		var target: Vector3 = trail_target
+		var target: Vector3 = _chain_target(i, player_pos, pup.global_position)
 		var speed_scale: float = 1.0
 		if gather_blend > 0.0:
 			var center: Vector3 = gather_point if gathering else player_pos
@@ -168,12 +171,48 @@ func tick(delta: float, player_pos: Vector3, gather_point: Vector3 = Vector3.ZER
 			if gathering:
 				target = gather_target
 			else:
-				var effective_spacing: float = lerpf(dist_behind, 0.0, gather_blend)
-				trail_target = _sample_trail(effective_spacing)
+				var effective_spacing: float = lerpf(follow_spacing, 0.0, gather_blend)
+				var trail_target: Vector3 = _chain_target(i, player_pos, pup.global_position)
+				if i == 0:
+					trail_target = _sample_trail(effective_spacing)
 				target = trail_target.lerp(gather_target, gather_blend)
+			target = _clamp_min_distance_from(target, player_pos, min_player_clearance)
 			speed_scale = 1.0 + gather_blend * 2.2
-		pup.call("set_target", target)
+		var wander := _wander_offset(i, target, player_pos)
+		pup.call("set_target", target, wander)
 		pup.call("update_follow", delta, speed_scale)
+
+
+func _clamp_min_distance_from(target: Vector3, center: Vector3, min_dist: float) -> Vector3:
+	var flat_target := Vector2(target.x, target.z)
+	var flat_center := Vector2(center.x, center.z)
+	var offset := flat_target - flat_center
+	if offset.length() < min_dist:
+		if offset.length() < 0.001:
+			offset = Vector2(1.0, 0.0)
+		else:
+			offset = offset.normalized()
+		offset *= min_dist
+		target.x = flat_center.x + offset.x
+		target.z = flat_center.y + offset.y
+	target.y = _floor_y
+	return target
+
+
+func _wander_offset(index: int, target: Vector3, player_pos: Vector3) -> Vector3:
+	var pup_pos: Vector3 = Vector3.ZERO
+	if index < _followers.size() and is_instance_valid(_followers[index]):
+		pup_pos = _followers[index].global_position
+	var near_target: float = Vector2(pup_pos.x, pup_pos.z).distance_to(Vector2(target.x, target.z))
+	var near_player: float = Vector2(pup_pos.x, pup_pos.z).distance_to(Vector2(player_pos.x, player_pos.z))
+	if near_target > wander_near_distance and near_player > wander_near_distance:
+		return Vector3.ZERO
+	var phase: float = _wander_time * 1.7 + float(index) * 1.9
+	return Vector3(
+		cos(phase) * wander_radius,
+		0.0,
+		sin(phase * 1.3) * wander_radius
+	)
 
 
 func _update_player_idle(player_pos: Vector3, delta: float) -> void:
@@ -199,6 +238,44 @@ func _ring_offset(index: int, total: int, radius: float) -> Vector3:
 	return Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
 
 
+func _chain_target(index: int, player_pos: Vector3, pup_pos: Vector3) -> Vector3:
+	if index == 0:
+		return _leader_trail_target(pup_pos, player_pos)
+	var leader: Node3D = _followers[index - 1]
+	if not is_instance_valid(leader):
+		return _sample_trail((float(index) + 1.0) * follow_spacing)
+	var leader_pos: Vector3 = leader.global_position
+	leader_pos.y = _floor_y
+	var dir := Vector3.ZERO
+	if index >= 2 and is_instance_valid(_followers[index - 2]):
+		var prev_pos: Vector3 = _followers[index - 2].global_position
+		dir = leader_pos - prev_pos
+	if dir.length() < 0.05:
+		dir = player_pos - leader_pos
+	if dir.length() < 0.05:
+		dir = pup_pos - leader_pos
+	if dir.length() < 0.05:
+		dir = Vector3(0.0, 0.0, 1.0)
+	dir = Vector3(dir.x, 0.0, dir.z).normalized()
+	var target: Vector3 = leader_pos - dir * follow_spacing
+	target.y = _floor_y
+	return target
+
+
+func _leader_trail_target(pup_pos: Vector3, player_pos: Vector3) -> Vector3:
+	var target: Vector3 = _sample_trail(follow_spacing)
+	var pup_dist: float = Vector2(pup_pos.x, pup_pos.z).distance_to(Vector2(player_pos.x, player_pos.z))
+	var target_dist: float = Vector2(target.x, target.z).distance_to(Vector2(player_pos.x, player_pos.z))
+	if pup_dist + 0.25 < target_dist:
+		var away: Vector3 = pup_pos - player_pos
+		if away.length() > 0.05:
+			target = player_pos + away.normalized() * follow_spacing * 0.35
+		else:
+			target = player_pos
+		target.y = _floor_y
+	return target
+
+
 func _record_player(player_pos: Vector3) -> void:
 	var p := player_pos
 	p.y = _floor_y
@@ -207,6 +284,14 @@ func _record_player(player_pos: Vector3) -> void:
 		return
 	var last: Vector3 = _history[_history.size() - 1]
 	if Vector2(p.x, p.z).distance_to(Vector2(last.x, last.z)) >= min_history_step:
+		if _history.size() >= 2:
+			var prev: Vector3 = _history[_history.size() - 2]
+			var new_dir := Vector2(p.x - last.x, p.z - last.z)
+			var old_dir := Vector2(last.x - prev.x, last.z - prev.z)
+			if new_dir.length() > 0.001 and old_dir.length() > 0.001:
+				if new_dir.normalized().dot(old_dir.normalized()) < 0.25:
+					while _history.size() > 32:
+						_history.remove_at(0)
 		_history.append(p)
 	else:
 		_history[_history.size() - 1] = p

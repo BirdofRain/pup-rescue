@@ -12,6 +12,8 @@ const BREED_MESH_PATHS: Array[String] = [
 @export var gather_speed_multiplier: float = 2.4
 @export var model_scale: float = 0.52
 @export var floor_y: float = 0.24
+@export var arrival_slow_radius: float = 0.9
+@export var direct_follow_range: float = 2.8
 
 const PATH_REBUILD_DIST: float = 0.45
 const WAYPOINT_REACH: float = 0.2
@@ -19,6 +21,7 @@ const STUCK_TIME: float = 0.4
 
 var _nav: MazeNav
 var _target: Vector3 = Vector3.ZERO
+var _wander_offset: Vector3 = Vector3.ZERO
 var _velocity: Vector3 = Vector3.ZERO
 var _path: Array[Vector3] = []
 var _path_index: int = 0
@@ -30,6 +33,7 @@ var _mesh: MeshInstance3D
 func setup(nav: MazeNav, spawn_pos: Vector3, breed_index: int) -> void:
 	_nav = nav
 	_target = spawn_pos
+	_wander_offset = Vector3.ZERO
 	_velocity = Vector3.ZERO
 	_path.clear()
 	_path_index = 0
@@ -43,6 +47,7 @@ func setup(nav: MazeNav, spawn_pos: Vector3, breed_index: int) -> void:
 func rebind_nav(nav: MazeNav, pos: Vector3) -> void:
 	_nav = nav
 	_target = pos
+	_wander_offset = Vector3.ZERO
 	_velocity = Vector3.ZERO
 	_path.clear()
 	_path_index = 0
@@ -52,13 +57,35 @@ func rebind_nav(nav: MazeNav, pos: Vector3) -> void:
 	_last_pos = global_position
 
 
-func set_target(world_pos: Vector3) -> void:
+func set_target(world_pos: Vector3, wander_offset: Vector3 = Vector3.ZERO) -> void:
 	world_pos.y = floor_y
-	if _target.distance_to(world_pos) > PATH_REBUILD_DIST:
-		_target = world_pos
+	_wander_offset = wander_offset
+	_wander_offset.y = 0.0
+	var goal := world_pos + _wander_offset
+	goal.y = floor_y
+	var moved: float = _target.distance_to(goal)
+	_target = goal
+	if _should_rebuild_path(moved):
 		_rebuild_path()
-	else:
-		_target = world_pos
+
+
+func _should_rebuild_path(moved: float) -> bool:
+	if _path.is_empty():
+		return true
+	if moved > PATH_REBUILD_DIST:
+		return true
+	var to_goal := _target - global_position
+	to_goal.y = 0.0
+	if to_goal.length() < 0.15:
+		return false
+	var wp := _current_waypoint() - global_position
+	wp.y = 0.0
+	if wp.length() < 0.05:
+		return true
+	var alignment: float = Vector2(to_goal.x, to_goal.z).normalized().dot(
+		Vector2(wp.x, wp.z).normalized()
+	)
+	return alignment < 0.15
 
 
 func _rebuild_path() -> void:
@@ -67,9 +94,32 @@ func _rebuild_path() -> void:
 	_stuck_timer = 0.0
 	if _nav == null:
 		return
+	var flat_dist: float = Vector2(global_position.x, global_position.z).distance_to(
+		Vector2(_target.x, _target.z)
+	)
+	if flat_dist <= direct_follow_range:
+		_path.append(_target)
+		return
 	_path = _nav.find_path(global_position, _target, floor_y)
 	if _path.is_empty():
 		_path.append(_target)
+	_path = _trim_path_behind(global_position, _path)
+
+
+func _trim_path_behind(from: Vector3, path: Array[Vector3]) -> Array[Vector3]:
+	if path.size() <= 1:
+		return path
+	var best_i: int = 0
+	var best_dist: float = INF
+	for i in range(path.size()):
+		var wp: Vector3 = path[i]
+		var d: float = Vector2(from.x, from.z).distance_to(Vector2(wp.x, wp.z))
+		if d < best_dist:
+			best_dist = d
+			best_i = i
+	if best_i > 0:
+		return path.slice(best_i)
+	return path
 
 
 func _current_waypoint() -> Vector3:
@@ -99,6 +149,8 @@ func update_follow(delta: float, speed_scale: float = 1.0) -> void:
 	var speed: float = move_speed * speed_scale
 	if dist > catchup_distance:
 		speed *= catchup_multiplier
+	var arrival_scale: float = clampf(dist / arrival_slow_radius, 0.15, 1.0)
+	speed *= arrival_scale
 	var dir := Vector3(to.x - from.x, 0.0, to.z - from.z).normalized()
 	var desired_vel := dir * speed
 	_velocity = _velocity.lerp(desired_vel, minf(1.0, 9.0 * delta))
