@@ -1,13 +1,13 @@
 class_name GameVersion
 extends RefCounted
 
-const VERSION := "0.3.2"
+const VERSION := "0.4.0"
 
-const PATCH_NOTES_TEXT := """• Coat color picker on main menu
+const PATCH_NOTES_TEXT := """• Name your leader pup on the main menu
+• Save Progress after level 2 (local device)
+• Local leaderboard: level, squad size, rescues
 • Squad cap: 5 base, up to 10 via shop
-• Shop: rainbow trail, round-up, squad +2
-• Followers follow your path around corners
-• Leader pup is 25% larger than followers"""
+• Followers follow your path around corners"""
 
 
 static func version_label() -> String:

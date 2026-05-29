@@ -5,15 +5,18 @@ class_name GameSave
 const SAVE_PATH := "user://save.json"
 const _UpgradeCatalog := preload("res://scripts/upgrade_catalog.gd")
 const _PupColors := preload("res://scripts/pup_colors.gd")
+const _ProgressTracker := preload("res://scripts/progress_tracker.gd")
 
 var current_level: int = 0
 var total_rescued: int = 0
 var coat_index: int = 0
 var treat_coins: int = 0
+var pup_name: String = ""
 var equipped: Dictionary = {}
 var owned_accessories: Array[String] = []
 var owned_upgrades: Array[String] = []
 var stats: Dictionary = {}
+var leaderboard: Array = []
 
 var boot_test_mode: bool = false
 var boot_new_game: bool = false
@@ -44,6 +47,8 @@ func load_save() -> bool:
 	owned_accessories = _string_array_from(data.get("owned_accessories", []))
 	owned_upgrades = _string_array_from(data.get("owned_upgrades", []))
 	stats = _dict_from_variant(data.get("stats", {}))
+	pup_name = str(data.get("pup_name", ""))
+	leaderboard = _array_from_variant(data.get("leaderboard", []))
 	return true
 
 
@@ -53,10 +58,12 @@ func save_game() -> void:
 		"total_rescued": total_rescued,
 		"coat_index": coat_index,
 		"treat_coins": treat_coins,
+		"pup_name": pup_name,
 		"equipped": equipped.duplicate(),
 		"owned_accessories": owned_accessories.duplicate(),
 		"owned_upgrades": owned_upgrades.duplicate(),
 		"stats": stats.duplicate(),
+		"leaderboard": leaderboard.duplicate(),
 	}
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f == null:
@@ -66,6 +73,9 @@ func save_game() -> void:
 
 
 func prepare_new_game(selected_coat: int) -> void:
+	var kept_stats := stats.duplicate()
+	var kept_board: Array = leaderboard.duplicate()
+	var kept_name := pup_name
 	current_level = 0
 	total_rescued = 0
 	treat_coins = 0
@@ -73,7 +83,9 @@ func prepare_new_game(selected_coat: int) -> void:
 	equipped = {}
 	owned_accessories = []
 	owned_upgrades = []
-	stats = {}
+	stats = kept_stats
+	leaderboard = kept_board
+	pup_name = kept_name
 	boot_test_mode = false
 	boot_new_game = true
 	save_game()
@@ -92,9 +104,74 @@ func prepare_test_maze(selected_coat: int) -> void:
 	boot_new_game = false
 
 
-func record_level_complete(rescued_this_level: int) -> void:
+func record_level_complete(rescued_this_level: int, squad_size: int = 0) -> void:
 	total_rescued += rescued_this_level
+	var completed_level: int = current_level + 1
 	current_level += 1
+	_update_bests(completed_level, total_rescued, squad_size)
+	if progress_features_unlocked():
+		_append_leaderboard_entry(completed_level, total_rescued, squad_size)
+	save_game()
+
+
+func set_pup_name(raw: String) -> void:
+	pup_name = _ProgressTracker.sanitize_name(raw)
+
+
+func get_pup_name() -> String:
+	return _ProgressTracker.display_name(pup_name)
+
+
+func progress_features_unlocked() -> bool:
+	if current_level >= _ProgressTracker.UNLOCK_AT_LEVEL_INDEX:
+		return true
+	return int(stats.get("best_level", 0)) >= _ProgressTracker.UNLOCK_AT_LEVEL_INDEX + 1
+
+
+func get_best_level() -> int:
+	return int(stats.get("best_level", 0))
+
+
+func get_best_rescued() -> int:
+	return int(stats.get("best_rescued", 0))
+
+
+func get_best_squad() -> int:
+	return int(stats.get("best_squad", 0))
+
+
+func _update_bests(level_display: int, rescued: int, squad_size: int) -> void:
+	stats["best_level"] = maxi(get_best_level(), level_display)
+	stats["best_rescued"] = maxi(get_best_rescued(), rescued)
+	stats["best_squad"] = maxi(get_best_squad(), squad_size)
+
+
+func _append_leaderboard_entry(level_display: int, rescued: int, squad_size: int) -> void:
+	var entry := {
+		"name": get_pup_name(),
+		"level": level_display,
+		"rescued": rescued,
+		"squad": squad_size,
+		"coins": treat_coins,
+		"ts": Time.get_unix_time_from_system(),
+	}
+	leaderboard.append(entry)
+	leaderboard.sort_custom(_ProgressTracker.sort_leaderboard)
+	while leaderboard.size() > _ProgressTracker.LEADERBOARD_MAX:
+		leaderboard.pop_back()
+
+
+func record_progress_snapshot(squad_size: int, rescued_pending: int = 0) -> void:
+	var display_level: int = current_level + 1
+	var display_rescued: int = total_rescued + maxi(0, rescued_pending)
+	_update_bests(display_level, display_rescued, squad_size)
+	if progress_features_unlocked():
+		_append_leaderboard_entry(display_level, display_rescued, squad_size)
+
+
+func save_run_progress(level_index: int, squad_size: int, rescued_pending: int = 0) -> void:
+	current_level = level_index
+	record_progress_snapshot(squad_size, rescued_pending)
 	save_game()
 
 
@@ -211,3 +288,9 @@ func _string_array_from(v: Variant) -> Array[String]:
 		for item: Variant in v:
 			out.append(str(item))
 	return out
+
+
+func _array_from_variant(v: Variant) -> Array:
+	if v is Array:
+		return v.duplicate()
+	return []

@@ -100,6 +100,7 @@ var menu_btn: Button = null
 var test_toggle: CheckButton = null
 var next_btn: Button = null
 var restart_btn2: Button = null
+var save_progress_btn: Button = null
 
 var is_tracking := false
 var active_touch_id := -1
@@ -261,7 +262,9 @@ func _update_level_label() -> void:
 	if level_label == null:
 		return
 	var name := "Test maze" if test_mode else "Level %d" % (current_level + 1)
-	level_label.text = "%s  |  Rescued: %d total" % [name, _save.total_rescued]
+	var leader := _save.get_pup_name()
+	level_label.text = "%s  |  %s  |  Rescued: %d" % [name, leader, _save.total_rescued]
+	_update_progress_ui()
 
 
 func _update_coins_label() -> void:
@@ -1211,6 +1214,10 @@ func _build_ui() -> void:
 	reload_btn = _big_button("Reload", func(): load_level(current_level))
 	top_bar.add_child(reload_btn)
 
+	save_progress_btn = _big_button("Save", _on_save_progress_pressed)
+	save_progress_btn.visible = false
+	top_bar.add_child(save_progress_btn)
+
 	test_toggle = CheckButton.new()
 	test_toggle.text = "Test maze"
 	test_toggle.button_pressed = test_mode
@@ -1311,12 +1318,33 @@ func _on_test_mode_toggled(on: bool) -> void:
 func _on_menu_pressed() -> void:
 	_save.current_level = current_level
 	_save.total_rescued += rescued_this_level
+	if _save.progress_features_unlocked():
+		_save.record_progress_snapshot(_current_squad_size(), rescued_this_level)
 	_save.save_game()
 	get_tree().change_scene_to_file("res://scenes/Menu.tscn")
 
 
+func _on_save_progress_pressed() -> void:
+	if test_mode or not _save.progress_features_unlocked():
+		return
+	_save.save_run_progress(current_level, _current_squad_size(), rescued_this_level)
+	SfxManager.play_shop_buy()
+	_set_hint("Progress saved for %s!" % _save.get_pup_name())
+
+
+func _current_squad_size() -> int:
+	if follower_squad == null or not follower_squad.is_active():
+		return 0
+	return follower_squad.count_followers()
+
+
+func _update_progress_ui() -> void:
+	if save_progress_btn != null:
+		save_progress_btn.visible = _save.progress_features_unlocked() and not test_mode
+
+
 func _on_next_level_pressed() -> void:
-	_save.record_level_complete(rescued_this_level)
+	_save.record_level_complete(rescued_this_level, _current_squad_size())
 	load_level(_save.current_level)
 
 
@@ -1329,8 +1357,8 @@ func _show_win_panel() -> void:
 			rescue_line = "\nPups rescued this level: %d" % rescued_this_level
 		elif rescue_total > 0:
 			rescue_line = "\nRescued this level: %d / %d" % [rescued_this_level, rescue_total]
-		win_label.text = "Level %d complete!%s\nTotal rescued: %d" % [
-			current_level + 1, rescue_line, _save.total_rescued
+		win_label.text = "Level %d complete!%s\n%s — %d total rescued" % [
+			current_level + 1, rescue_line, _save.get_pup_name(), _save.total_rescued
 		]
 	if shop_panel:
 		shop_panel.set_summary("Spend Treat Coins below!", _last_coin_summary)
