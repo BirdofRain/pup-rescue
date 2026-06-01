@@ -8,6 +8,7 @@ extends Node3D
 @export var muddy_color: Color = Color(0.44, 0.34, 0.24, 0.52)
 @export var footprint_scale: float = 1.0
 @export var color_alpha_mult: float = 1.0
+@export var max_prints: int = 0
 
 var _rainbow_mode: bool = false
 
@@ -109,3 +110,7 @@ func _spawn_at(pos: Vector3, move_dir: Vector3) -> void:
 	add_child(mi)
 	mi.global_position = world_pos
 	_prints.append(mi)
+	while max_prints > 0 and _prints.size() > max_prints:
+		var old: MeshInstance3D = _prints.pop_front()
+		if is_instance_valid(old):
+			old.queue_free()

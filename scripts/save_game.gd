@@ -6,6 +6,8 @@ const SAVE_PATH := "user://save.json"
 const _UpgradeCatalog := preload("res://scripts/upgrade_catalog.gd")
 const _PupColors := preload("res://scripts/pup_colors.gd")
 const _ProgressTracker := preload("res://scripts/progress_tracker.gd")
+const _DifficultyConfig := preload("res://scripts/difficulty_config.gd")
+const _FollowerSnap := preload("res://scripts/follower_snap.gd")
 
 var current_level: int = 0
 var total_rescued: int = 0
@@ -17,6 +19,8 @@ var owned_accessories: Array[String] = []
 var owned_upgrades: Array[String] = []
 var stats: Dictionary = {}
 var leaderboard: Array = []
+var difficulty_mode: int = _DifficultyConfig.MODE_BEGINNER
+var snap_mode: int = _FollowerSnap.MODE_TRAIL
 
 var boot_test_mode: bool = false
 var boot_new_game: bool = false
@@ -49,6 +53,8 @@ func load_save() -> bool:
 	stats = _dict_from_variant(data.get("stats", {}))
 	pup_name = str(data.get("pup_name", ""))
 	leaderboard = _array_from_variant(data.get("leaderboard", []))
+	difficulty_mode = _DifficultyConfig.clamp_mode(int(data.get("difficulty_mode", _DifficultyConfig.MODE_BEGINNER)))
+	snap_mode = _FollowerSnap.clamp_mode(int(data.get("snap_mode", _FollowerSnap.MODE_TRAIL)))
 	return true
 
 
@@ -64,6 +70,8 @@ func save_game() -> void:
 		"owned_upgrades": owned_upgrades.duplicate(),
 		"stats": stats.duplicate(),
 		"leaderboard": leaderboard.duplicate(),
+		"difficulty_mode": difficulty_mode,
+		"snap_mode": snap_mode,
 	}
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f == null:
@@ -120,6 +128,22 @@ func set_pup_name(raw: String) -> void:
 
 func get_pup_name() -> String:
 	return _ProgressTracker.display_name(pup_name)
+
+
+func get_difficulty_mode() -> int:
+	return _DifficultyConfig.clamp_mode(difficulty_mode)
+
+
+func set_difficulty_mode(mode: int) -> void:
+	difficulty_mode = _DifficultyConfig.clamp_mode(mode)
+
+
+func get_snap_mode() -> int:
+	return _FollowerSnap.clamp_mode(snap_mode)
+
+
+func set_snap_mode(mode: int) -> void:
+	snap_mode = _FollowerSnap.clamp_mode(mode)
 
 
 func progress_features_unlocked() -> bool:

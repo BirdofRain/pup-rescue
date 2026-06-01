@@ -31,6 +31,9 @@ const UltraPowerupCatalogScript := preload("res://scripts/ultra_powerup_catalog.
 const MazeBuilderScript := preload("res://scripts/maze_builder.gd")
 const FootprintTrailScript := preload("res://scripts/footprint_trail.gd")
 const GameVersionScript := preload("res://scripts/game_version.gd")
+const DifficultyConfigScript := preload("res://scripts/difficulty_config.gd")
+const FollowerSnapScript := preload("res://scripts/follower_snap.gd")
+const PupColorsScript := preload("res://scripts/pup_colors.gd")
 const LAYER_PLAYER := 2
 
 var cam: Camera3D
@@ -56,11 +59,12 @@ var pen_gate_center: Vector3 = Vector3.ZERO
 var pen_gate_area: Area3D = null
 var pen_opened: bool = false
 var pen_center: Vector3 = Vector3.ZERO
+var pen_pup_base: int = 0
 var follower_squad: FollowerSquad = null
+var rescue_room_pups: Array[Node3D] = []
+var rescue_room_root: Node3D = null
 var footprint_trail: Node3D = null
 
-var rescue_nodes: Array[Node3D] = []
-var rescue_total: int = 0
 var rescued_this_level: int = 0
 
 var speed_nodes: Array[Node3D] = []
@@ -154,7 +158,7 @@ func load_level(level_index: int) -> void:
 	else:
 		run_seed = Time.get_ticks_msec()
 
-	var lines := LevelData.make(level_index, run_seed, test_mode)
+	var lines := LevelData.make(level_index, run_seed, test_mode, _save.get_difficulty_mode())
 	var ts: float = builder.tile_size
 	fit_floor_to_level(lines, ts)
 
@@ -186,11 +190,17 @@ func load_level(level_index: int) -> void:
 	_spawn_ultra_pickups_if_present(info)
 	if has_pen:
 		_spawn_pen_gate_if_present(info)
-	if info.has("rescue") and info.rescue.size() > 0:
-		_spawn_rescues(info)
+		var pen_rng := RandomNumberGenerator.new()
+		pen_rng.seed = run_seed ^ (level_index * 7919)
+		pen_pup_base = ProgressionConfigScript.roll_pen_pup_count(pen_rng)
+		info["pen_pup_count"] = pen_pup_base
+		_spawn_waiting_pups_in_room(info)
+	else:
+		pen_pup_base = 0
 
 	if puppy.has_method("set_maze_data"):
 		puppy.set_maze_data(lines, ts)
+	_configure_maze_nav(info, ts)
 
 	if puppy.has_method("set_coat_index"):
 		puppy.set_coat_index(_save.coat_index)
@@ -206,12 +216,9 @@ func load_level(level_index: int) -> void:
 	_apply_follower_collar()
 
 	if follower_squad != null:
-		follower_squad.rebind_for_level(
-			puppy.get_nav() if puppy.has_method("get_nav") else null,
-			_follower_floor_y(),
-			$World/ActorsRoot,
-			info["start"]
-		)
+		follower_squad.clear()
+		follower_squad.max_followers = _compute_max_followers()
+		follower_squad.set_snap_mode(_save.get_snap_mode())
 
 	has_last_target = false
 	last_target = Vector3.ZERO
@@ -222,11 +229,11 @@ func load_level(level_index: int) -> void:
 		_set_hint("Level 1 — walk to the blue exit!")
 	elif test_mode:
 		if has_pen:
-			_set_hint("Test maze — key opens pen gate; escort pups to exit.")
+			_set_hint("Test maze — key opens rescue room; escort pups to exit.")
 		else:
 			_set_hint("Test maze — collect key, open door, reach exit.")
 	elif has_pen:
-		_set_hint("Find the key, open the pen gate, escort pups to the exit!")
+		_set_hint("Find the key, then optionally visit the side rescue room!")
 	else:
 		_set_hint("Find the key, open the door, reach the exit.")
 	_update_coins_label()
@@ -234,7 +241,6 @@ func load_level(level_index: int) -> void:
 
 func _physics_process(delta: float) -> void:
 	_try_collect_key_near_puppy()
-	_try_collect_rescues_near_puppy()
 	_try_collect_speed_near_puppy()
 	_try_collect_double_boost_near_puppy()
 	_try_collect_coin_near_puppy()
@@ -244,15 +250,19 @@ func _physics_process(delta: float) -> void:
 	ultra_buffs.tick()
 	if footprint_trail != null and footprint_trail.has_method("set_rainbow_mode"):
 		footprint_trail.set_rainbow_mode(_wants_rainbow_trail())
-	_update_rescue_reveal()
 	_update_boost_label()
 	_update_coins_label()
 	_try_unlock_door_near_puppy()
 	_try_open_pen_near_puppy()
-	var gather_pos := _exit_gather_point()
 	if follower_squad != null and follower_squad.is_active():
 		var ultra_mult: float = ultra_buffs.follower_speed_mult()
-		follower_squad.tick(delta, puppy.global_position, gather_pos, ultra_mult)
+		follower_squad.tick(
+			delta,
+			puppy.global_position,
+			Vector3.ZERO,
+			ultra_mult,
+			_save.get_snap_mode()
+		)
 	if footprint_trail != null and puppy != null:
 		footprint_trail.tick(puppy.global_position, puppy.velocity)
 	_try_reach_exit_near_puppy()
@@ -263,7 +273,8 @@ func _update_level_label() -> void:
 		return
 	var name := "Test maze" if test_mode else "Level %d" % (current_level + 1)
 	var leader := _save.get_pup_name()
-	level_label.text = "%s  |  %s  |  Rescued: %d" % [name, leader, _save.total_rescued]
+	var mode := DifficultyConfigScript.mode_label(_save.get_difficulty_mode())
+	level_label.text = "%s  |  %s  |  %s  |  Rescued: %d" % [name, mode, leader, _save.total_rescued]
 	_update_progress_ui()
 
 
@@ -313,6 +324,72 @@ func _compute_max_followers() -> int:
 
 func _wants_rainbow_trail() -> bool:
 	return _save.has_rainbow_trail() or ultra_buffs.wants_rainbow_trail()
+
+
+func _compute_pen_release_count() -> int:
+	var shop_bonus: int = int(_save.get_upgrade_value("max_followers", 0.0))
+	var base_count: int = pen_pup_base if pen_pup_base > 0 else ProgressionConfigScript.PEN_PUP_MIN
+	return mini(
+		ProgressionConfigScript.pen_release_count(base_count, shop_bonus, run_squad_bonus),
+		_compute_max_followers()
+	)
+
+
+func _spawn_waiting_pups_in_room(info: Dictionary) -> void:
+	_clear_waiting_pups_in_room()
+	if not has_pen or pen_opened:
+		return
+	rescue_room_root = info.get("rescue_room_root") as Node3D
+	var cells: Array = info.get("pen_cells", [])
+	if cells.is_empty():
+		return
+	var show_count: int = mini(_compute_pen_release_count(), cells.size())
+	var rng := RandomNumberGenerator.new()
+	rng.seed = run_seed ^ (current_level * 4423)
+	for i in show_count:
+		var cell_pos: Vector3 = cells[i]
+		var offset := Vector3(
+			rng.randf_range(-0.12, 0.12),
+			0.0,
+			rng.randf_range(-0.12, 0.12)
+		)
+		var pup := _make_waiting_pup_marker(cell_pos + offset, i)
+		if rescue_room_root != null:
+			rescue_room_root.add_child(pup)
+		else:
+			maze_root.add_child(pup)
+		rescue_room_pups.append(pup)
+
+
+func _make_waiting_pup_marker(pos: Vector3, index: int) -> Node3D:
+	var node := Node3D.new()
+	node.name = "WaitingPup_%d" % index
+	var mesh := MeshInstance3D.new()
+	var mesh_res: Mesh = load(PupColorsScript.MESH_PATH) as Mesh
+	if mesh_res != null:
+		mesh.mesh = mesh_res
+	mesh.scale = PupColorsScript.scaled_body(0.36)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = PupColorsScript.get_color(index)
+	mat.roughness = 0.85
+	mat.emission_enabled = true
+	mat.emission = mat.albedo_color * 0.2
+	mesh.material_override = mat
+	if mesh.mesh != null:
+		for s in range(mesh.mesh.get_surface_count()):
+			mesh.set_surface_override_material(s, mat)
+	node.add_child(mesh)
+	node.position = pos + Vector3(0.0, 0.2, 0.0)
+	node.rotation.y = float(index) * 0.9
+	return node
+
+
+func _clear_waiting_pups_in_room() -> void:
+	for pup in rescue_room_pups:
+		if is_instance_valid(pup):
+			pup.queue_free()
+	rescue_room_pups.clear()
+	rescue_room_root = null
 
 
 func _apply_meta_upgrades() -> void:
@@ -561,32 +638,6 @@ func _collect_ultra_node(node: Node3D) -> void:
 	_update_boost_label()
 
 
-func _update_rescue_reveal() -> void:
-	if not ultra_buffs.wants_reveal_rescue() or puppy == null:
-		for node in rescue_nodes:
-			if is_instance_valid(node):
-				node.scale = Vector3.ONE
-		return
-	var nearest: Node3D = null
-	var nearest_dist: float = INF
-	for node in rescue_nodes:
-		if not is_instance_valid(node):
-			continue
-		var dist: float = _flat_distance(puppy.global_position, node.global_position)
-		if dist < nearest_dist:
-			nearest_dist = dist
-			nearest = node
-	for node in rescue_nodes:
-		if not is_instance_valid(node):
-			continue
-		if node == nearest:
-			var pulse: float = 1.0 + sin(Time.get_ticks_msec() * 0.008) * 0.15
-			node.scale = Vector3.ONE * pulse
-		else:
-			node.scale = Vector3.ONE
-
-
-
 func fit_floor_to_level(lines: PackedStringArray, tile_size: float, margin_tiles: float = 2.0) -> void:
 	var cols: int = lines[0].length()
 	var rows: int = lines.size()
@@ -596,7 +647,7 @@ func fit_floor_to_level(lines: PackedStringArray, tile_size: float, margin_tiles
 	var pm := floor_mesh.mesh as PlaneMesh
 	if pm != null:
 		pm.size = Vector2(w, h)
-	_apply_checker_floor_material(cols, rows, tile_size)
+	_apply_grass_floor_material(cols, rows, tile_size)
 	floor_body.global_position = center
 	var bs := floor_collision.shape as BoxShape3D
 	if bs == null:
@@ -605,26 +656,39 @@ func fit_floor_to_level(lines: PackedStringArray, tile_size: float, margin_tiles
 	bs.size = Vector3(w, 0.1, h)
 
 
-func _apply_checker_floor_material(cols: int, rows: int, tile_size: float) -> void:
+func _apply_grass_floor_material(cols: int, rows: int, tile_size: float) -> void:
 	var tile_px: int = 32
 	var tex_w: int = cols * tile_px
 	var tex_h: int = rows * tile_px
 	var img := Image.create(tex_w, tex_h, false, Image.FORMAT_RGB8)
-	var light := Color(0.88, 0.84, 0.78)
-	var dark := Color(0.78, 0.74, 0.68)
+	var grass_a := Color(0.44, 0.66, 0.34)
+	var grass_b := Color(0.38, 0.58, 0.30)
+	var grass_light := Color(0.52, 0.74, 0.40)
+	var grass_dark := Color(0.32, 0.48, 0.26)
 	for y in tex_h:
 		for x in tex_w:
 			var tx: int = x / tile_px
 			var ty: int = y / tile_px
-			var c: Color = light if (tx + ty) % 2 == 0 else dark
+			var c: Color = grass_a if (tx + ty) % 2 == 0 else grass_b
+			var speck: int = (x * 7 + y * 13 + tx * 5 + ty * 11) % 17
+			if speck == 0:
+				c = grass_light
+			elif speck == 1 or speck == 2:
+				c = grass_dark
+			elif speck == 3:
+				c = c.lightened(0.05)
 			img.set_pixel(x, y, c)
 	var tex := ImageTexture.create_from_image(img)
 	var mat := StandardMaterial3D.new()
 	mat.albedo_texture = tex
 	mat.uv1_scale = Vector3(1.0, 1.0, 1.0)
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	mat.roughness = 0.95
+	mat.roughness = 0.92
 	floor_mesh.material_override = mat
+
+
+func _apply_checker_floor_material(cols: int, rows: int, tile_size: float) -> void:
+	_apply_grass_floor_material(cols, rows, tile_size)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -684,7 +748,7 @@ func handle_touch(screen_pos: Vector2) -> void:
 func _spawn_key_if_present(info: Dictionary) -> void:
 	if not info.has("key") or info.key == null:
 		return
-	key_node = _make_marker("KeyMarker", info.key + Vector3(0.0, 0.35, 0.0), Color(1.0, 0.88, 0.15), 0.12, 0.25)
+	key_node = _make_key_pickup(info.key + Vector3(0.0, 0.3, 0.0))
 	key_area = _add_pickup_area(key_node, 0.35, _on_key_body_entered)
 
 
@@ -695,30 +759,15 @@ func _spawn_exit_if_present(info: Dictionary) -> void:
 	exit_area = _add_pickup_area(exit_node, 0.45, _on_exit_body_entered)
 
 
-func _spawn_rescues(info: Dictionary) -> void:
-	rescue_nodes.clear()
-	if not info.has("rescue"):
-		return
-	rescue_total = info.rescue.size()
-	for pos: Vector3 in info.rescue:
-		var node := _make_marker("RescueMarker", pos + Vector3(0.0, 0.3, 0.0), Color(1.0, 0.45, 0.75), 0.14, 0.28)
-		maze_root.add_child(node)
-		rescue_nodes.append(node)
-		_add_pickup_area(node, 0.4, _on_rescue_body_entered)
-
-
 func _spawn_speed_pickups_if_present(info: Dictionary) -> void:
 	speed_nodes.clear()
 	if not info.has("fruit"):
 		return
 	var marker_scale: float = _powerup_marker_scale(current_level)
 	for pos: Vector3 in info.fruit:
-		var node := _make_marker(
-			"SpeedMarker",
+		var node := _make_star_pickup(
 			pos + Vector3(0.0, 0.32 * marker_scale, 0.0),
-			Color(0.95, 0.35, 0.15),
-			0.11 * marker_scale,
-			0.22 * marker_scale
+			marker_scale
 		)
 		speed_nodes.append(node)
 		_add_pickup_area(node, 0.38 * marker_scale, _on_speed_body_entered)
@@ -730,19 +779,16 @@ func _spawn_double_boost_pickups_if_present(info: Dictionary) -> void:
 		return
 	var marker_scale: float = _powerup_marker_scale(current_level) * 1.12
 	for pos: Vector3 in info.double_boost:
-		var node := _make_marker(
-			"DoubleBoostMarker",
+		var node := _make_heart_pickup(
 			pos + Vector3(0.0, 0.34 * marker_scale, 0.0),
-			Color(0.72, 0.38, 0.95),
-			0.13 * marker_scale,
-			0.26 * marker_scale
+			marker_scale
 		)
 		double_boost_nodes.append(node)
 		_add_pickup_area(node, 0.42 * marker_scale, _on_double_boost_body_entered)
 
 
 func _powerup_marker_scale(level_index: int) -> float:
-	return 1.0 + clampf(float(level_index) * 0.14, 0.0, 1.0)
+	return DifficultyConfigScript.powerup_marker_scale(level_index, _save.get_difficulty_mode())
 
 
 func _make_marker(marker_name: String, pos: Vector3, color: Color, radius: float, height: float, box: bool = false) -> Node3D:
@@ -765,6 +811,97 @@ func _make_marker(marker_name: String, pos: Vector3, color: Color, radius: float
 	mat.albedo_color = color
 	mesh.material_override = mat
 	node.add_child(mesh)
+	return node
+
+
+func _make_key_pickup(pos: Vector3) -> Node3D:
+	var node := Node3D.new()
+	node.name = "KeyMarker"
+	node.position = pos
+	maze_root.add_child(node)
+	var gold := Color(1.0, 0.88, 0.15)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = gold
+	mat.emission_enabled = true
+	mat.emission = gold * 0.35
+	var ring := MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	torus.inner_radius = 0.06
+	torus.outer_radius = 0.13
+	torus.rings = 12
+	torus.ring_segments = 18
+	ring.mesh = torus
+	ring.material_override = mat
+	ring.rotation_degrees = Vector3(90.0, 0.0, 0.0)
+	node.add_child(ring)
+	var shank := MeshInstance3D.new()
+	var bar := BoxMesh.new()
+	bar.size = Vector3(0.2, 0.035, 0.035)
+	shank.mesh = bar
+	shank.material_override = mat
+	shank.position = Vector3(0.16, 0.0, 0.0)
+	node.add_child(shank)
+	return node
+
+
+func _make_star_pickup(pos: Vector3, scale: float) -> Node3D:
+	var node := Node3D.new()
+	node.name = "SpeedMarker"
+	node.position = pos
+	maze_root.add_child(node)
+	var col := Color(1.0, 0.82, 0.12)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = col
+	mat.emission_enabled = true
+	mat.emission = col * 0.45
+	var s: float = 0.22 * scale
+	for i in range(4):
+		var arm := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(s * 0.32, s * 0.1, s)
+		arm.mesh = box
+		arm.material_override = mat
+		arm.rotation_degrees = Vector3(0.0, float(i) * 45.0, 0.0)
+		node.add_child(arm)
+	var center := MeshInstance3D.new()
+	var sphere := SphereMesh.new()
+	sphere.radius = s * 0.18
+	sphere.height = s * 0.22
+	center.mesh = sphere
+	center.material_override = mat
+	node.add_child(center)
+	return node
+
+
+func _make_heart_pickup(pos: Vector3, scale: float) -> Node3D:
+	var node := Node3D.new()
+	node.name = "DoubleBoostMarker"
+	node.position = pos
+	maze_root.add_child(node)
+	var col := Color(0.95, 0.28, 0.42)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = col
+	mat.emission_enabled = true
+	mat.emission = col * 0.4
+	var s: float = 0.2 * scale
+	for side in [-1.0, 1.0]:
+		var lobe := MeshInstance3D.new()
+		var sphere := SphereMesh.new()
+		sphere.radius = s * 0.42
+		sphere.height = s * 0.72
+		lobe.mesh = sphere
+		lobe.material_override = mat
+		lobe.position = Vector3(side * s * 0.28, s * 0.12, 0.0)
+		node.add_child(lobe)
+	var tip := MeshInstance3D.new()
+	var cone := CylinderMesh.new()
+	cone.top_radius = 0.0
+	cone.bottom_radius = s * 0.52
+	cone.height = s * 0.55
+	tip.mesh = cone
+	tip.material_override = mat
+	tip.position = Vector3(0.0, -s * 0.18, 0.0)
+	node.add_child(tip)
 	return node
 
 
@@ -827,49 +964,11 @@ func _collect_key() -> void:
 	key_node = null
 	key_area = null
 	if has_pen:
-		_set_hint("Key collected! Touch the pen gate.")
+		_set_hint("Key collected! Open the rescue room gate.")
 	else:
 		_set_hint("Key collected! Touch the door.")
 	_try_unlock_door_near_puppy()
 	_try_open_pen_near_puppy()
-
-
-func _on_rescue_body_entered(body: Node) -> void:
-	if body == puppy:
-		_try_collect_rescues_near_puppy()
-
-
-func _try_collect_rescues_near_puppy() -> void:
-	if puppy == null:
-		return
-	var nearest: Node3D = null
-	var nearest_dist: float = pickup_radius + 1.0
-	for node in rescue_nodes:
-		if not is_instance_valid(node):
-			continue
-		var dist: float = _flat_distance(puppy.global_position, node.global_position)
-		if dist <= pickup_radius and dist < nearest_dist:
-			nearest_dist = dist
-			nearest = node
-	if nearest != null:
-		_collect_rescue_node(nearest)
-
-
-func _collect_rescue_node(node: Node3D) -> void:
-	if node == null or not rescue_nodes.has(node):
-		return
-	rescue_nodes.erase(node)
-	var spawn_pos: Vector3 = node.global_position
-	rescued_this_level += 1
-	SfxManager.play_rescue()
-	_burst_at(spawn_pos, Color(1.0, 0.5, 0.8))
-	node.queue_free()
-	_update_level_label()
-	if _spawn_followers_at(spawn_pos) > 0:
-		var extra := " (double boost!)" if _is_double_rescue_active() else ""
-		_set_hint("Rescued a pup! It follows you — bring it to the exit.%s" % extra)
-	else:
-		_set_hint("Rescued a pup! (%d this level)" % rescued_this_level)
 
 
 func _on_speed_body_entered(body: Node) -> void:
@@ -937,7 +1036,7 @@ func _collect_double_boost_node(node: Node3D) -> void:
 	_apply_meta_upgrades()
 	SfxManager.play_double_boost()
 	_burst_at(burst_pos, Color(0.75, 0.45, 1.0))
-	_set_hint("Double pup boost + +1 squad size! (cap: %d)" % _compute_max_followers())
+	_set_hint("Squad boost! +1 rescue room cap (up to %d pups)" % _compute_max_followers())
 
 
 func _apply_speed_boost() -> void:
@@ -990,7 +1089,7 @@ func _update_boost_label() -> void:
 	if _is_speed_boost_active():
 		parts.append("Speed: %.1fs" % _speed_boost_seconds_left())
 	if _is_double_rescue_active():
-		parts.append("Double pups: %.1fs" % _double_rescue_seconds_left())
+		parts.append("Squad cap +1: %.1fs" % _double_rescue_seconds_left())
 	for label: String in ultra_buffs.active_labels():
 		parts.append(label)
 	if parts.is_empty():
@@ -1000,41 +1099,31 @@ func _update_boost_label() -> void:
 	boost_label.text = "  |  ".join(parts)
 
 
+func _configure_maze_nav(info: Dictionary, ts: float) -> void:
+	if puppy == null or not puppy.has_method("get_nav"):
+		return
+	var nav: MazeNav = puppy.get_nav()
+	if nav == null:
+		return
+	nav.set_static_blockers(info.get("pen_wall_blockers", []))
+	if has_pen:
+		var pen_tiles: Array[Vector2i] = []
+		for p: Variant in info.get("pen_cells", []):
+			if p is Vector3:
+				pen_tiles.append(Vector2i(int(round((p as Vector3).x / ts)), int(round((p as Vector3).z / ts))))
+		var gate := Vector2i(-1, -1)
+		if info.get("pen_gate") is Vector3:
+			var g: Vector3 = info.pen_gate as Vector3
+			gate = Vector2i(int(round(g.x / ts)), int(round(g.z / ts)))
+		nav.configure_sealed_pen(pen_tiles, gate, not pen_opened)
+	_refresh_dynamic_blockers()
+
+
 func _follower_floor_y() -> float:
 	var floor_y: float = 0.24
 	if puppy != null and puppy.has_method("_capsule_half_height"):
 		floor_y = puppy._capsule_half_height() * 0.55
 	return floor_y
-
-
-func _ensure_follower_squad_active() -> bool:
-	if puppy == null or follower_squad == null:
-		return false
-	var nav: MazeNav = puppy.get_nav() if puppy.has_method("get_nav") else null
-	if nav == null:
-		return false
-	if not follower_squad.is_active():
-		follower_squad.activate(nav, _follower_floor_y(), $World/ActorsRoot, puppy.global_position)
-	return true
-
-
-func _spawn_followers_at(world_pos: Vector3) -> int:
-	if not _ensure_follower_squad_active():
-		return 0
-	var spawned := 0
-	if follower_squad.add_follower(world_pos):
-		spawned += 1
-	if _is_double_rescue_active():
-		var rng := RandomNumberGenerator.new()
-		rng.randomize()
-		var offset := Vector3(
-			rng.randf_range(-0.28, 0.28),
-			0.0,
-			rng.randf_range(-0.28, 0.28)
-		)
-		if follower_squad.add_follower(world_pos + offset):
-			spawned += 1
-	return spawned
 
 
 func _on_door_body_entered(body: Node) -> void:
@@ -1081,14 +1170,6 @@ func _try_reach_exit_near_puppy() -> void:
 		_try_reach_exit()
 
 
-func _exit_gather_point() -> Vector3:
-	if exit_node == null or puppy == null:
-		return Vector3.ZERO
-	if _near(puppy.global_position, exit_node.global_position):
-		return exit_node.global_position
-	return Vector3.ZERO
-
-
 func _try_reach_exit() -> void:
 	if level_won:
 		return
@@ -1096,7 +1177,7 @@ func _try_reach_exit() -> void:
 		_set_hint("Need the key first.")
 		return
 	if has_pen and not pen_opened:
-		_set_hint("Open the pen gate with your key first!")
+		_set_hint("Open the rescue room with your key first!")
 		return
 	if follower_squad != null and follower_squad.is_active():
 		var exit_pos: Vector3 = exit_node.global_position if exit_node else Vector3.ZERO
@@ -1113,15 +1194,15 @@ func _try_reach_exit() -> void:
 			return
 		if _exit_wait_start_ms < 0:
 			_exit_wait_start_ms = Time.get_ticks_msec()
-		var gathered: int = follower_squad.count_gathered_at(exit_pos)
+		var gathered: int = follower_squad.count_escorted_at(exit_pos, puppy.global_position)
 		var total: int = follower_squad.count_followers()
 		var need: int = follower_squad.required_at_exit_count()
 		var elapsed: int = Time.get_ticks_msec() - _exit_wait_start_ms
 		if elapsed < EXIT_GRACE_MS:
-			_set_hint("Waiting for pups to catch up! (%d/%d)" % [gathered, total])
+			_set_hint("Lead pups to the exit! (%d/%d)" % [gathered, total])
 			return
 		if gathered < need:
-			_set_hint("Waiting for pups to catch up! (%d/%d)" % [gathered, need])
+			_set_hint("Lead pups to the exit! (%d/%d)" % [gathered, need])
 			return
 		_complete_level()
 		return
@@ -1227,14 +1308,21 @@ func _build_ui() -> void:
 	level_label = Label.new()
 	level_label.position = Vector2(m, m + 52)
 	level_label.size = Vector2(700, 24)
+	level_label.add_theme_color_override("font_color", Color(1.0, 0.98, 0.92))
+	level_label.add_theme_color_override("font_outline_color", Color(0.12, 0.22, 0.10))
+	level_label.add_theme_constant_override("outline_size", 2)
 	ui_root.add_child(level_label)
 
 	coins_label = Label.new()
 	coins_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	coins_label.offset_top = m + 8
 	coins_label.offset_right = -m
-	coins_label.offset_left = -200
+	coins_label.offset_left = -220
 	coins_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	coins_label.add_theme_font_size_override("font_size", 16)
+	coins_label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.82))
+	coins_label.add_theme_color_override("font_outline_color", Color(0.12, 0.22, 0.10))
+	coins_label.add_theme_constant_override("outline_size", 3)
 	ui_root.add_child(coins_label)
 
 	boost_label = Label.new()
@@ -1249,6 +1337,9 @@ func _build_ui() -> void:
 	hint_label = Label.new()
 	hint_label.position = Vector2(m, m + 78)
 	hint_label.size = Vector2(900, 28)
+	hint_label.add_theme_color_override("font_color", Color(1.0, 0.98, 0.90))
+	hint_label.add_theme_color_override("font_outline_color", Color(0.12, 0.22, 0.10))
+	hint_label.add_theme_constant_override("outline_size", 2)
 	ui_root.add_child(hint_label)
 
 	var version_label := Label.new()
@@ -1263,43 +1354,68 @@ func _build_ui() -> void:
 	win_panel = Panel.new()
 	win_panel.visible = false
 	win_panel.set_anchors_preset(Control.PRESET_CENTER)
-	win_panel.offset_left = -240
-	win_panel.offset_top = -200
-	win_panel.offset_right = 240
-	win_panel.offset_bottom = 200
+	win_panel.clip_contents = true
+	var win_style := StyleBoxFlat.new()
+	win_style.bg_color = Color(0.97, 0.98, 0.99, 0.97)
+	win_style.border_color = Color(0.55, 0.68, 0.82)
+	win_style.set_border_width_all(3)
+	win_style.set_corner_radius_all(16)
+	win_style.content_margin_left = 12
+	win_style.content_margin_right = 12
+	win_style.content_margin_top = 12
+	win_style.content_margin_bottom = 12
+	win_panel.add_theme_stylebox_override("panel", win_style)
 	ui_root.add_child(win_panel)
+	_layout_win_panel()
 
 	var win_v := VBoxContainer.new()
 	win_v.set_anchors_preset(Control.PRESET_FULL_RECT)
-	win_v.offset_left = 12
-	win_v.offset_top = 12
-	win_v.offset_right = -12
-	win_v.offset_bottom = -12
-	win_v.add_theme_constant_override("separation", 8)
+	win_v.offset_left = 14
+	win_v.offset_top = 14
+	win_v.offset_right = -14
+	win_v.offset_bottom = -14
+	win_v.add_theme_constant_override("separation", 10)
 	win_panel.add_child(win_v)
 
 	win_label = Label.new()
 	win_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	win_label.custom_minimum_size = Vector2(420, 48)
+	win_label.custom_minimum_size = Vector2(0, 40)
+	win_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	win_label.add_theme_color_override("font_color", Color(0.12, 0.18, 0.28))
+	win_label.add_theme_font_size_override("font_size", 16)
 	win_v.add_child(win_label)
 
 	shop_panel = ShopPanelScript.new()
 	shop_panel.name = "ShopPanel"
-	shop_panel.custom_minimum_size = Vector2(420, 280)
+	shop_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	shop_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shop_panel.custom_minimum_size = Vector2(0, 180)
 	shop_panel.setup(_save)
 	shop_panel.purchase_requested.connect(_purchase_shop_item)
 	win_v.add_child(shop_panel)
 
 	var win_btns := HBoxContainer.new()
 	win_btns.add_theme_constant_override("separation", 12)
+	win_btns.size_flags_vertical = Control.SIZE_SHRINK_END
+	win_btns.alignment = BoxContainer.ALIGNMENT_CENTER
 	win_v.add_child(win_btns)
 
-	next_btn = _big_button("Next Level", _on_next_level_pressed)
+	next_btn = _win_button("Next Level", _on_next_level_pressed)
 	win_btns.add_child(next_btn)
-	restart_btn2 = _big_button("Restart", func(): load_level(current_level))
+	restart_btn2 = _win_button("Restart", func(): load_level(current_level))
 	win_btns.add_child(restart_btn2)
-	var menu_win_btn := _big_button("Menu", _on_menu_pressed)
+	var menu_win_btn := _win_button("Menu", _on_menu_pressed)
 	win_btns.add_child(menu_win_btn)
+
+
+func _win_button(text: String, callback: Callable) -> Button:
+	var b := _big_button(text, callback)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.22, 0.48, 0.82)
+	style.set_corner_radius_all(10)
+	b.add_theme_stylebox_override("normal", style)
+	b.add_theme_color_override("font_color", Color.WHITE)
+	return b
 
 
 func _big_button(text: String, callback: Callable) -> Button:
@@ -1308,6 +1424,23 @@ func _big_button(text: String, callback: Callable) -> Button:
 	b.custom_minimum_size = Vector2(120, 44)
 	b.pressed.connect(callback)
 	return b
+
+
+func _layout_win_panel() -> void:
+	if win_panel == null:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	var w := clampf(vp.x - 48.0, 340.0, 520.0)
+	var h := clampf(vp.y - 72.0, 420.0, 620.0)
+	win_panel.offset_left = -w * 0.5
+	win_panel.offset_right = w * 0.5
+	win_panel.offset_top = -h * 0.5
+	win_panel.offset_bottom = h * 0.5
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_SIZE_CHANGED:
+		_layout_win_panel()
 
 
 func _on_test_mode_toggled(on: bool) -> void:
@@ -1349,14 +1482,13 @@ func _on_next_level_pressed() -> void:
 
 
 func _show_win_panel() -> void:
+	_layout_win_panel()
 	if win_panel:
 		win_panel.visible = true
 	if win_label:
 		var rescue_line := ""
 		if rescued_this_level > 0:
-			rescue_line = "\nPups rescued this level: %d" % rescued_this_level
-		elif rescue_total > 0:
-			rescue_line = "\nRescued this level: %d / %d" % [rescued_this_level, rescue_total]
+			rescue_line = "\nRescued %d pups from the rescue room" % rescued_this_level
 		win_label.text = "Level %d complete!%s\n%s — %d total rescued" % [
 			current_level + 1, rescue_line, _save.get_pup_name(), _save.total_rescued
 		]
@@ -1380,11 +1512,7 @@ func _set_hint(msg: String) -> void:
 func _clear_runtime_pickups() -> void:
 	if footprint_trail != null:
 		footprint_trail.clear()
-	for node in rescue_nodes:
-		if is_instance_valid(node):
-			node.queue_free()
-	rescue_nodes.clear()
-	rescue_total = 0
+	_clear_waiting_pups_in_room()
 
 	for node in speed_nodes:
 		if is_instance_valid(node):
@@ -1477,30 +1605,66 @@ func _try_open_pen_near_puppy() -> void:
 
 func _try_open_pen() -> void:
 	if pen_opened or not has_key:
-		if not has_key:
-			_set_hint("Pen gate is locked. Need the key.")
+		if not has_key and has_pen:
+			_set_hint("Rescue room is locked. Find the key.")
 		return
 	_open_pen()
 
 
 func _open_pen() -> void:
+	if pen_opened:
+		return
+	var spawn_positions: Array[Vector3] = []
+	for waiting_pup in rescue_room_pups:
+		if is_instance_valid(waiting_pup):
+			var pos: Vector3 = waiting_pup.global_position
+			pos.y = _follower_floor_y()
+			spawn_positions.append(pos)
 	pen_opened = true
+	if puppy != null and puppy.has_method("get_nav"):
+		var nav: MazeNav = puppy.get_nav()
+		if nav != null:
+			nav.set_pen_open(true)
+	_clear_waiting_pups_in_room()
 	SfxManager.play_door()
 	_burst_at(pen_gate_center, Color(1.0, 0.6, 0.85))
-	_refresh_dynamic_blockers()
 	if is_instance_valid(pen_gate_body):
 		pen_gate_body.queue_free()
 	pen_gate_body = null
 	if pen_gate_area and is_instance_valid(pen_gate_area):
 		pen_gate_area.queue_free()
 	pen_gate_area = null
+	_refresh_dynamic_blockers()
 	var nav: MazeNav = puppy.get_nav() if puppy.has_method("get_nav") else null
-	if nav != null and follower_squad != null:
-		var spawn: Vector3 = pen_center
-		if spawn == Vector3.ZERO:
-			spawn = pen_gate_center
-		var floor_y: float = 0.24
-		if puppy.has_method("_capsule_half_height"):
-			floor_y = puppy._capsule_half_height() * 0.55
-		follower_squad.spawn_in_pen(nav, spawn, floor_y, $World/ActorsRoot, puppy.global_position)
-	_set_hint("Pen open! Lead the pups to the exit.")
+	var release_count: int = _compute_pen_release_count()
+	if nav != null and follower_squad != null and release_count > 0:
+		if spawn_positions.is_empty():
+			var spawn: Vector3 = pen_center
+			if spawn == Vector3.ZERO:
+				spawn = pen_gate_center
+			var rng := RandomNumberGenerator.new()
+			rng.randomize()
+			for _i in release_count:
+				var offset := Vector3(
+					rng.randf_range(-0.25, 0.25),
+					0.0,
+					rng.randf_range(-0.25, 0.25)
+				)
+				var pos: Vector3 = spawn + offset
+				pos.y = _follower_floor_y()
+				spawn_positions.append(pos)
+		follower_squad.max_followers = _compute_max_followers()
+		var spawned: int = follower_squad.release_pen_followers(
+			spawn_positions.slice(0, release_count),
+			nav,
+			_follower_floor_y(),
+			$World/ActorsRoot,
+			puppy.global_position
+		)
+		rescued_this_level = spawned
+		_apply_follower_collar()
+		_update_level_label()
+		SfxManager.play_rescue()
+		_set_hint("%d pups rescued! Lead them to the exit." % spawned)
+	else:
+		_set_hint("Rescue room open! Lead pups to the exit.")

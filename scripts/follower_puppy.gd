@@ -10,19 +10,22 @@ const PupAppearanceScript := preload("res://scripts/pup_appearance.gd")
 @export var model_scale: float = 0.52
 @export var floor_y: float = 0.24
 @export var arrival_slow_radius: float = 0.9
-@export var direct_follow_range: float = 2.8
+@export var direct_follow_range: float = 4.5
 
 const PATH_REBUILD_DIST: float = 0.28
 const WAYPOINT_REACH: float = 0.22
 const STUCK_TIME: float = 0.25
+const MAX_STUCK_REBUILDS: int = 2
 
 var _nav: MazeNav
 var _target: Vector3 = Vector3.ZERO
-var _wander_offset: Vector3 = Vector3.ZERO
 var _velocity: Vector3 = Vector3.ZERO
 var _path: Array[Vector3] = []
 var _path_index: int = 0
 var _stuck_timer: float = 0.0
+var _stuck_rebuilds: int = 0
+var _spin_cooldown: float = 0.0
+var _path_rebuild_allowed: bool = true
 var _last_pos: Vector3 = Vector3.ZERO
 var _mesh: MeshInstance3D
 var _appearance = null
@@ -34,11 +37,12 @@ var _mesh_loaded: bool = false
 func setup(nav: MazeNav, spawn_pos: Vector3, _breed_index: int = -1, follower_index: int = -1) -> void:
 	_nav = nav
 	_target = spawn_pos
-	_wander_offset = Vector3.ZERO
 	_velocity = Vector3.ZERO
 	_path.clear()
 	_path_index = 0
 	_stuck_timer = 0.0
+	_stuck_rebuilds = 0
+	_spin_cooldown = 0.0
 	global_position = spawn_pos
 	global_position.y = floor_y
 	_last_pos = global_position
@@ -62,24 +66,43 @@ func apply_collar(accessory_id: String) -> void:
 func rebind_nav(nav: MazeNav, pos: Vector3) -> void:
 	_nav = nav
 	_target = pos
-	_wander_offset = Vector3.ZERO
 	_velocity = Vector3.ZERO
 	_path.clear()
 	_path_index = 0
 	_stuck_timer = 0.0
+	_stuck_rebuilds = 0
 	global_position = pos
 	global_position.y = floor_y
 	_last_pos = global_position
 
 
-func set_target(world_pos: Vector3, wander_offset: Vector3 = Vector3.ZERO) -> void:
+func set_path_rebuild_allowed(allowed: bool) -> void:
+	_path_rebuild_allowed = allowed
+
+
+func get_stuck_time() -> float:
+	return _stuck_timer
+
+
+func snap_to(pos: Vector3) -> void:
+	pos.y = floor_y
+	if _nav != null:
+		pos = _nav.clamp_to_walkable(pos, floor_y)
+	global_position = pos
+	_target = pos
+	_velocity = Vector3.ZERO
+	_path.clear()
+	_path_index = 0
+	_stuck_timer = 0.0
+	_stuck_rebuilds = 0
+	_spin_cooldown = 0.2
+	_last_pos = global_position
+
+
+func set_target(world_pos: Vector3, _wander_offset: Vector3 = Vector3.ZERO) -> void:
 	world_pos.y = floor_y
-	_wander_offset = wander_offset
-	_wander_offset.y = 0.0
-	var goal := world_pos + _wander_offset
-	goal.y = floor_y
-	var moved: float = _target.distance_to(goal)
-	_target = goal
+	var moved: float = _target.distance_to(world_pos)
+	_target = world_pos
 	if _should_rebuild_path(moved):
 		_rebuild_path()
 
@@ -87,6 +110,8 @@ func set_target(world_pos: Vector3, wander_offset: Vector3 = Vector3.ZERO) -> vo
 func _should_rebuild_path(moved: float) -> bool:
 	if _path.is_empty():
 		return true
+	if not _path_rebuild_allowed and _path.size() > 0:
+		return false
 	if moved > PATH_REBUILD_DIST:
 		return true
 	var to_goal := _target - global_position
@@ -104,6 +129,10 @@ func _should_rebuild_path(moved: float) -> bool:
 
 
 func _rebuild_path() -> void:
+	if not _path_rebuild_allowed:
+		if _path.is_empty():
+			_path.append(_target)
+		return
 	_path.clear()
 	_path_index = 0
 	_stuck_timer = 0.0
@@ -151,6 +180,8 @@ func _current_waypoint() -> Vector3:
 func update_follow(delta: float, speed_scale: float = 1.0) -> void:
 	if _nav == null:
 		return
+	if _spin_cooldown > 0.0:
+		_spin_cooldown = maxf(0.0, _spin_cooldown - delta)
 	if _path.is_empty():
 		_rebuild_path()
 	var from := global_position
@@ -174,10 +205,14 @@ func update_follow(delta: float, speed_scale: float = 1.0) -> void:
 	next = _nav.resolve_motion(from, next, floor_y)
 	next.y = floor_y
 	global_position = next
-	if dir.length() > 0.01 and _mesh != null:
+	if step >= 0.02 and _spin_cooldown <= 0.0 and _stuck_timer < STUCK_TIME * 0.5 and _mesh != null:
 		var target_yaw: float = atan2(dir.x, dir.z) + PupColorsScript.MODEL_YAW_OFFSET
 		_mesh.rotation.y = lerp_angle(_mesh.rotation.y, target_yaw, 10.0 * delta)
 	_check_stuck(delta)
+
+
+func needs_snap_request() -> bool:
+	return _stuck_rebuilds >= MAX_STUCK_REBUILDS
 
 
 func _check_stuck(delta: float) -> void:
@@ -187,9 +222,12 @@ func _check_stuck(delta: float) -> void:
 	if moved < 0.015:
 		_stuck_timer += delta
 		if _stuck_timer >= STUCK_TIME:
-			_rebuild_path()
+			_stuck_rebuilds += 1
+			if _stuck_rebuilds < MAX_STUCK_REBUILDS:
+				_rebuild_path()
 	else:
 		_stuck_timer = 0.0
+		_stuck_rebuilds = 0
 	_last_pos = global_position
 
 
@@ -198,7 +236,7 @@ func _build_mesh() -> void:
 		_mesh = MeshInstance3D.new()
 		add_child(_mesh)
 	var scale_mult: float = 0.94 + float(_follower_index % 3) * 0.06
-	_mesh.scale = Vector3.ONE * model_scale * scale_mult
+	_mesh.scale = PupColorsScript.scaled_body(model_scale * scale_mult)
 	if not _mesh_loaded:
 		var mesh_res: Mesh = load(PupColorsScript.MESH_PATH) as Mesh
 		if mesh_res != null:

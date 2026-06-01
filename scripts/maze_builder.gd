@@ -2,11 +2,11 @@
 extends Node
 class_name MazeBuilder
 
-@export var tile_size: float = 1.0
+@export var tile_size: float = 1.1
 @export var wall_height: float = 0.65
 
 # Thin wall thickness relative to tile size (try 0.10–0.18)
-@export var wall_thickness_ratio: float = 0.14
+@export var wall_thickness_ratio: float = 0.12
 
 # Seals tiny pin-holes at L/T/+ corners with a flush square (not protruding caps).
 @export var corner_fill: bool = true
@@ -60,6 +60,7 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D, level_index: 
 		"rescue": [],
 		"pen_gate": null,
 		"pen_cells": [],
+		"pen_pup_count": 0,
 		"fruit": [],
 		"double_boost": [],
 		"coins": [],
@@ -113,7 +114,7 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D, level_index: 
 
 	_build_thin_boundary_walls(lines, cols, rows, walls)
 
-	_build_pen_floors(lines, cols, rows, maze_root)
+	_build_rescue_room(lines, cols, rows, maze_root, info)
 
 	# Add the door physical blocker (if present)
 	if info.door != null:
@@ -127,8 +128,8 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D, level_index: 
 		info["pen_gate_body"] = _add_door_block(
 			lines, cols, rows, walls,
 			Vector2i(int(info.pen_gate.x / tile_size), int(info.pen_gate.z / tile_size)),
-			Color(1.0, 0.55, 0.75),
-			"PenGate"
+			Color(0.82, 0.22, 0.28),
+			"RescueGate"
 		)
 
 	return info
@@ -203,25 +204,153 @@ func _mark_endpoint(d: Dictionary, vx: int, vz: int) -> void:
 
 # -------------------- door --------------------
 
-func _build_pen_floors(lines: PackedStringArray, cols: int, rows: int, maze_root: Node3D) -> void:
-	var pen_root := Node3D.new()
-	pen_root.name = "PenFloors"
-	maze_root.add_child(pen_root)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(1.0, 0.82, 0.9)
-	mat.roughness = 0.9
-	for z in range(rows):
-		for x in range(cols):
-			if lines[z].unicode_at(x) != CP_P:
+# -------------------- rescue room --------------------
+
+func _build_rescue_room(
+	lines: PackedStringArray,
+	cols: int,
+	rows: int,
+	maze_root: Node3D,
+	info: Dictionary
+) -> void:
+	if info.pen_cells.is_empty() and info.pen_gate == null:
+		return
+	var room_root := Node3D.new()
+	room_root.name = "RescueRoom"
+	maze_root.add_child(room_root)
+	info["rescue_room_root"] = room_root
+	info["pen_wall_blockers"] = []
+
+	var floor_mat := StandardMaterial3D.new()
+	floor_mat.albedo_color = Color(0.78, 0.68, 0.92)
+	floor_mat.roughness = 0.88
+	floor_mat.emission_enabled = true
+	floor_mat.emission = Color(0.68, 0.55, 0.85)
+	floor_mat.emission_energy_multiplier = 0.15
+
+	for p: Vector3 in info.pen_cells:
+		var plane := MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(tile_size * 0.94, tile_size * 0.94)
+		plane.mesh = pm
+		plane.material_override = floor_mat
+		plane.position = p + Vector3(0.0, 0.025, 0.0)
+		plane.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+		room_root.add_child(plane)
+
+	if info.pen_cells.size() > 0:
+		_add_rescue_room_walls(room_root, info.pen_cells, lines, cols, rows, info)
+
+
+func _add_rescue_room_walls(
+	parent: Node3D,
+	pen_cells: Array,
+	lines: PackedStringArray,
+	cols: int,
+	rows: int,
+	info: Dictionary
+) -> void:
+	var cell_set: Dictionary = {}
+	var min_x: int = 9999
+	var max_x: int = -9999
+	var min_z: int = 9999
+	var max_z: int = -9999
+	for p: Vector3 in pen_cells:
+		var tx: int = int(round(p.x / tile_size))
+		var tz: int = int(round(p.z / tile_size))
+		cell_set["%d,%d" % [tx, tz]] = true
+		min_x = mini(min_x, tx)
+		max_x = maxi(max_x, tx)
+		min_z = mini(min_z, tz)
+		max_z = maxi(max_z, tz)
+
+	var gate_tx: int = -1
+	var gate_tz: int = -1
+	if info.pen_gate is Vector3:
+		gate_tx = int(round((info.pen_gate as Vector3).x / tile_size))
+		gate_tz = int(round((info.pen_gate as Vector3).z / tile_size))
+
+	var blockers: Array = info.get("pen_wall_blockers", [])
+
+	var wall_mat := StandardMaterial3D.new()
+	wall_mat.albedo_color = Color(0.52, 0.32, 0.68)
+	wall_mat.roughness = 0.9
+	var t: float = tile_size * wall_thickness_ratio
+	var h: float = wall_height * 0.55
+	var y: float = h * 0.5
+
+	for tx in range(min_x, max_x + 1):
+		for tz in range(min_z, max_z + 1):
+			if not cell_set.has("%d,%d" % [tx, tz]):
 				continue
-			var plane := MeshInstance3D.new()
-			var pm := PlaneMesh.new()
-			pm.size = Vector2(tile_size * 0.92, tile_size * 0.92)
-			plane.mesh = pm
-			plane.material_override = mat
-			plane.position = Vector3(float(x) * tile_size, 0.02, float(z) * tile_size)
-			plane.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
-			pen_root.add_child(plane)
+			var base := Vector3(float(tx) * tile_size, y, float(tz) * tile_size)
+			if _needs_rescue_wall(lines, tx - 1, tz, cols, rows, cell_set, gate_tx, gate_tz):
+				_add_rescue_wall_segment(
+					parent, base + Vector3(-tile_size * 0.5, 0.0, 0.0),
+					Vector3(t, h, tile_size), wall_mat, blockers
+				)
+			if _needs_rescue_wall(lines, tx + 1, tz, cols, rows, cell_set, gate_tx, gate_tz):
+				_add_rescue_wall_segment(
+					parent, base + Vector3(tile_size * 0.5, 0.0, 0.0),
+					Vector3(t, h, tile_size), wall_mat, blockers
+				)
+			if _needs_rescue_wall(lines, tx, tz - 1, cols, rows, cell_set, gate_tx, gate_tz):
+				_add_rescue_wall_segment(
+					parent, base + Vector3(0.0, 0.0, -tile_size * 0.5),
+					Vector3(tile_size, h, t), wall_mat, blockers
+				)
+			if _needs_rescue_wall(lines, tx, tz + 1, cols, rows, cell_set, gate_tx, gate_tz):
+				_add_rescue_wall_segment(
+					parent, base + Vector3(0.0, 0.0, tile_size * 0.5),
+					Vector3(tile_size, h, t), wall_mat, blockers
+				)
+
+
+func _needs_rescue_wall(
+	lines: PackedStringArray,
+	nx: int,
+	nz: int,
+	cols: int,
+	rows: int,
+	cell_set: Dictionary,
+	gate_tx: int,
+	gate_tz: int
+) -> bool:
+	if nx == gate_tx and nz == gate_tz:
+		return false
+	if cell_set.has("%d,%d" % [nx, nz]):
+		return false
+	return true
+
+
+func _add_rescue_wall_segment(
+	parent: Node3D,
+	center: Vector3,
+	size: Vector3,
+	mat: StandardMaterial3D,
+	blockers: Array = []
+) -> void:
+	var body := StaticBody3D.new()
+	body.name = "RescueWall"
+	body.collision_layer = 1
+	body.collision_mask = 0
+	body.position = center
+	parent.add_child(body)
+
+	var vis := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = size
+	vis.mesh = box
+	vis.material_override = mat
+	body.add_child(vis)
+
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	col.shape = shape
+	body.add_child(col)
+
+	blockers.append(center)
 
 
 func _add_door_block(

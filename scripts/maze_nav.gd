@@ -8,7 +8,10 @@ var tile_size: float = 1.0
 var cols: int = 0
 var rows: int = 0
 var body_radius: float = 0.22
-var blockers: Array[Vector3] = []
+var static_blockers: Array[Vector3] = []
+var dynamic_blockers: Array[Vector3] = []
+var _pen_sealed: bool = false
+var _sealed_cells: Dictionary = {}
 
 
 func _init(
@@ -28,15 +31,42 @@ func _init(
 
 
 func clear_blockers() -> void:
-	blockers.clear()
+	clear_dynamic_blockers()
 
 
-func add_blocker(world_pos: Vector3) -> void:
-	blockers.append(world_pos)
+func clear_dynamic_blockers() -> void:
+	dynamic_blockers.clear()
+
+
+func set_static_blockers(positions: Array) -> void:
+	static_blockers.clear()
+	for p in positions:
+		if p is Vector3:
+			static_blockers.append(p)
+
+
+func add_dynamic_blocker(world_pos: Vector3) -> void:
+	dynamic_blockers.append(world_pos)
+
+
+func configure_sealed_pen(pen_cell_coords: Array, gate_cell: Vector2i, sealed: bool) -> void:
+	_sealed_cells.clear()
+	for cell in pen_cell_coords:
+		if cell is Vector2i:
+			_sealed_cells["%d,%d" % [cell.x, cell.y]] = true
+	if gate_cell.x >= 0 and gate_cell.y >= 0:
+		_sealed_cells["%d,%d" % [gate_cell.x, gate_cell.y]] = true
+	_pen_sealed = sealed
+
+
+func set_pen_open(open: bool) -> void:
+	_pen_sealed = not open
 
 
 func is_tile_walkable(cell_x: int, cell_z: int) -> bool:
 	if cell_x < 0 or cell_x >= cols or cell_z < 0 or cell_z >= rows:
+		return false
+	if _pen_sealed and _sealed_cells.has("%d,%d" % [cell_x, cell_z]):
 		return false
 	return is_code_walkable(lines[cell_z].unicode_at(cell_x))
 
@@ -63,14 +93,21 @@ func is_position_walkable(pos: Vector3) -> bool:
 
 
 func _is_world_point_walkable(world_pos: Vector3) -> bool:
-	for blocker: Vector3 in blockers:
-		var b := blocker
-		b.y = 0.0
-		var p := world_pos
-		p.y = 0.0
-		if p.distance_to(b) < body_radius + 0.15:
+	for blocker: Vector3 in static_blockers:
+		if _point_blocked_by(world_pos, blocker):
+			return false
+	for blocker: Vector3 in dynamic_blockers:
+		if _point_blocked_by(world_pos, blocker):
 			return false
 	return is_tile_walkable(tile_x(world_pos.x), tile_z(world_pos.z))
+
+
+func _point_blocked_by(world_pos: Vector3, blocker: Vector3) -> bool:
+	var b := blocker
+	b.y = 0.0
+	var p := world_pos
+	p.y = 0.0
+	return p.distance_to(b) < body_radius + 0.15
 
 
 func resolve_motion(from: Vector3, to: Vector3, floor_y: float) -> Vector3:
@@ -133,6 +170,7 @@ func find_path(from_world: Vector3, to_world: Vector3, floor_y: float = 0.0) -> 
 		result.append(tile_center(start.x, start.y, floor_y))
 		return result
 	var queue: Array[Vector2i] = [start]
+	var queue_head: int = 0
 	var came_from: Dictionary = {}
 	came_from[start] = start
 	var dirs: Array[Vector2i] = [
@@ -140,7 +178,8 @@ func find_path(from_world: Vector3, to_world: Vector3, floor_y: float = 0.0) -> 
 	]
 	var found_goal := false
 	while not queue.is_empty():
-		var current: Vector2i = queue.pop_front()
+		var current: Vector2i = queue[queue_head]
+		queue_head += 1
 		if current == goal:
 			found_goal = true
 			break

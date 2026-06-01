@@ -2,6 +2,8 @@
 extends Node
 class_name LevelGenerator
 
+const _DifficultyConfig := preload("res://scripts/difficulty_config.gd")
+
 # Generates a SOLVABLE maze as PackedStringArray lines.
 # Perfect maze (recursive backtracker) on a cell grid,
 # expanded to a tile grid:
@@ -22,8 +24,6 @@ class_name LevelGenerator
 #   C treat coin pickup
 #   A accessory pickup
 #   U ultra powerup
-#   R rescue pup marker (optional)
-
 const DIRS: Array[Vector2i] = [
 	Vector2i(0, -1), # N
 	Vector2i(1, 0),  # E
@@ -36,13 +36,21 @@ var _rows: Array[String] = []
 var _tile_w: int = 0
 var _tile_h: int = 0
 var _rng_seed: int = 1234544
+var _difficulty_mode: int = _DifficultyConfig.MODE_MASTER
 
 
 func set_seed(seed_value: int) -> void:
 	_rng_seed = seed_value if seed_value != 0 else 1
 
 
-func generate_level(level_index: int, cells_w: int, cells_h: int, with_key_door: bool = true) -> PackedStringArray:
+func generate_level(
+	level_index: int,
+	cells_w: int,
+	cells_h: int,
+	with_key_door: bool = true,
+	difficulty_mode: int = _DifficultyConfig.MODE_MASTER
+) -> PackedStringArray:
+	_difficulty_mode = _DifficultyConfig.clamp_mode(difficulty_mode)
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	rng.seed = _rng_seed + level_index * 1336
 
@@ -116,28 +124,21 @@ func generate_level(level_index: int, cells_w: int, cells_h: int, with_key_door:
 	_set_tile(far1.x, far1.y, "S")
 	_set_tile(far2.x, far2.y, "E")
 
-	# Optional: Key on path + rescue pen (or classic door fallback)
+	# Optional: side rescue alcove + key on main path before the branch
 	if with_key_door:
 		var path: Array[Vector2i] = _bfs_path(far1, far2)
-		if path.size() >= 8:
-			var key_i: int = clampi(int(path.size() * 0.30), 2, path.size() - 3)
-			var key_pos: Vector2i = path[key_i]
-			if _tile_is_floor(key_pos.x, key_pos.y):
-				_set_tile(key_pos.x, key_pos.y, "K")
-
-			if not _place_rescue_pen(path, far1, far2):
-				var door_i: int = clampi(int(path.size() * 0.70), 2, path.size() - 3)
-				var door_pos: Vector2i = path[door_i]
-				if _tile_is_floor(door_pos.x, door_pos.y):
-					_set_tile(door_pos.x, door_pos.y, "D")
+		if path.size() >= 6:
+			var junction_idx: int = _place_side_rescue_pen(path, far1, far2)
+			if junction_idx < 0:
+				_force_side_rescue_pen(path, far1, far2)
+				junction_idx = _find_pen_junction_on_path(path)
+			_place_key_before_pen(path, junction_idx, rng)
 
 	_place_speed_pickups(rng, level_index, far1)
 	_place_double_boost_pickups(rng, level_index, far1)
 	_place_coin_pickups(rng, level_index, far1)
 	_place_accessory_pickups(rng, level_index, far1)
 	_place_ultra_pickups(rng, level_index, far1)
-	if level_index > 0:
-		_place_rescue_markers(rng, level_index, far1)
 
 	# Convert to PackedStringArray
 	var out := PackedStringArray()
@@ -147,31 +148,11 @@ func generate_level(level_index: int, cells_w: int, cells_h: int, with_key_door:
 	return out
 
 func _speed_pickup_count(level_index: int, rng: RandomNumberGenerator) -> int:
-	if level_index == 0:
-		return rng.randi_range(1, 2)
-	if level_index <= 2:
-		return rng.randi_range(4, 5)
-	if level_index <= 5:
-		return rng.randi_range(5, 7)
-	return rng.randi_range(6, mini(9, 10))
+	return _DifficultyConfig.speed_pickup_count(level_index, _difficulty_mode, rng)
 
 
 func _double_boost_count(level_index: int, rng: RandomNumberGenerator) -> int:
-	if level_index == 0:
-		return 0
-	if level_index <= 2:
-		return 1
-	if level_index <= 5:
-		return rng.randi_range(1, 2)
-	return rng.randi_range(2, 3)
-
-
-func _rescue_marker_count(level_index: int, rng: RandomNumberGenerator) -> int:
-	if level_index <= 2:
-		return 3
-	if level_index <= 5:
-		return 4
-	return rng.randi_range(5, 6)
+	return _DifficultyConfig.double_boost_count(level_index, _difficulty_mode, rng)
 
 
 func _collect_floor_tiles() -> Array[Vector2i]:
@@ -285,32 +266,16 @@ func _place_double_boost_pickups(rng: RandomNumberGenerator, level_index: int, s
 	_place_tiles_at(positions, "B")
 
 
-func _place_rescue_markers(rng: RandomNumberGenerator, level_index: int, start: Vector2i) -> void:
-	var rescue_count: int = _rescue_marker_count(level_index, rng)
-	var positions: Array[Vector2i] = _pick_corner_floor_tiles(rescue_count, start, rng, 4)
-	_place_tiles_at(positions, "R")
-
-
 func _coin_pickup_count(level_index: int, rng: RandomNumberGenerator) -> int:
-	if level_index == 0:
-		return rng.randi_range(1, 2)
-	if level_index <= 2:
-		return rng.randi_range(2, 3)
-	return rng.randi_range(2, 4)
+	return _DifficultyConfig.coin_pickup_count(level_index, _difficulty_mode, rng)
 
 
 func _accessory_pickup_count(level_index: int, rng: RandomNumberGenerator) -> int:
-	if level_index == 0:
-		return 0
-	if level_index <= 2:
-		return 1
-	return rng.randi_range(1, 2)
+	return _DifficultyConfig.accessory_pickup_count(level_index, _difficulty_mode, rng)
 
 
 func _ultra_pickup_count(level_index: int, rng: RandomNumberGenerator) -> int:
-	if level_index < 3:
-		return 0
-	return rng.randi_range(0, 1)
+	return _DifficultyConfig.ultra_pickup_count(level_index, _difficulty_mode, rng)
 
 
 func _place_coin_pickups(rng: RandomNumberGenerator, level_index: int, _start: Vector2i) -> void:
@@ -343,13 +308,14 @@ func _place_ultra_pickups(rng: RandomNumberGenerator, level_index: int, start: V
 	_place_tiles_at(positions, "U")
 
 
-func _place_rescue_pen(path: Array[Vector2i], start: Vector2i, goal: Vector2i) -> bool:
-	if path.size() < 10:
-		return false
+func _place_side_rescue_pen(path: Array[Vector2i], start: Vector2i, goal: Vector2i) -> int:
+	if path.size() < 8:
+		return -1
 	var rng := RandomNumberGenerator.new()
 	rng.seed = _rng_seed ^ (path.size() * 7919)
+	var max_idx: int = maxi(4, int(path.size() * 0.45))
 	var indices: Array[int] = []
-	for i in range(4, path.size() - 4):
+	for i in range(3, mini(max_idx, path.size() - 3)):
 		indices.append(i)
 	for _swap in range(indices.size() - 1, 0, -1):
 		var j: int = rng.randi_range(0, _swap)
@@ -357,46 +323,104 @@ func _place_rescue_pen(path: Array[Vector2i], start: Vector2i, goal: Vector2i) -
 		indices[_swap] = indices[j]
 		indices[j] = tmp
 	for idx in indices:
-		var branch: Vector2i = path[idx]
-		if branch == start or branch == goal:
+		var junction: Vector2i = path[idx]
+		if junction == start or junction == goal:
 			continue
-		if not _tile_is_walkable(branch.x, branch.y):
+		if _get_tile(junction.x, junction.y) != ".".unicode_at(0):
 			continue
-		var bcp: int = _get_tile(branch.x, branch.y)
-		if bcp != ".".unicode_at(0):
-			continue
-		var along: Vector2i = path[idx + 1] - branch
+		var along: Vector2i = path[idx + 1] - junction
 		if along == Vector2i.ZERO:
-			along = branch - path[idx - 1]
-		for dir: Vector2i in _perp_dirs(along):
-			if _try_carve_pen_at(branch, dir):
+			along = junction - path[idx - 1]
+		if along == Vector2i.ZERO:
+			continue
+		for side_dir: Vector2i in _perp_dirs(along):
+			if _try_carve_side_alcove(junction, side_dir):
+				return idx
+	return -1
+
+
+func _force_side_rescue_pen(path: Array[Vector2i], start: Vector2i, goal: Vector2i) -> bool:
+	for idx in range(2, path.size() - 2):
+		var junction: Vector2i = path[idx]
+		if junction == start or junction == goal:
+			continue
+		if _get_tile(junction.x, junction.y) != ".".unicode_at(0):
+			continue
+		for side_dir: Vector2i in DIRS:
+			if _try_carve_side_alcove(junction, side_dir):
 				return true
 	return false
+
+
+func _find_pen_junction_on_path(path: Array[Vector2i]) -> int:
+	for idx in range(path.size()):
+		var tile: Vector2i = path[idx]
+		for side_dir: Vector2i in DIRS:
+			var n: Vector2i = tile + side_dir
+			if _get_tile(n.x, n.y) == "G".unicode_at(0):
+				return idx
+	return clampi(int(path.size() * 0.22), 1, maxi(1, path.size() - 3))
+
+
+func _place_key_before_pen(path: Array[Vector2i], junction_idx: int, rng: RandomNumberGenerator) -> void:
+	if path.size() < 3:
+		return
+	var max_key_idx: int = maxi(1, junction_idx - 1)
+	if max_key_idx <= 0:
+		max_key_idx = clampi(int(path.size() * 0.18), 1, path.size() - 2)
+	var min_key_idx: int = maxi(1, max_key_idx - 3)
+	var key_i: int = rng.randi_range(min_key_idx, max_key_idx)
+	var key_pos: Vector2i = path[key_i]
+	if _get_tile(key_pos.x, key_pos.y) == ".".unicode_at(0):
+		_set_tile(key_pos.x, key_pos.y, "K")
+
+
+func _try_carve_side_alcove(junction: Vector2i, side_dir: Vector2i) -> bool:
+	if _get_tile(junction.x, junction.y) != ".".unicode_at(0):
+		return false
+	var gate: Vector2i = junction + side_dir
+	if gate.x < 1 or gate.x >= _tile_w - 1 or gate.y < 1 or gate.y >= _tile_h - 1:
+		return false
+	if _get_tile(gate.x, gate.y) != "#".unicode_at(0):
+		return false
+	var perp_dirs: Array[Vector2i] = _perp_dirs(side_dir)
+	for perp: Vector2i in perp_dirs:
+		if _try_carve_alcove_shape(junction, side_dir, perp, 2, 2):
+			return true
+		if _try_carve_alcove_shape(junction, side_dir, perp, 3, 2):
+			return true
+		if _try_carve_alcove_shape(junction, side_dir, perp, 2, 1):
+			return true
+	return false
+
+
+func _try_carve_alcove_shape(
+	junction: Vector2i,
+	side_dir: Vector2i,
+	perp: Vector2i,
+	depth: int,
+	width: int
+) -> bool:
+	var gate: Vector2i = junction + side_dir
+	var pen_cells: Array[Vector2i] = []
+	for d in range(2, depth + 1):
+		for w in range(width):
+			var p: Vector2i = junction + side_dir * d + perp * w
+			if p.x < 1 or p.x >= _tile_w - 1 or p.y < 1 or p.y >= _tile_h - 1:
+				return false
+			if _get_tile(p.x, p.y) != "#".unicode_at(0):
+				return false
+			pen_cells.append(p)
+	_set_tile(gate.x, gate.y, "G")
+	for cell: Vector2i in pen_cells:
+		_set_tile(cell.x, cell.y, "P")
+	return true
 
 
 func _perp_dirs(along: Vector2i) -> Array[Vector2i]:
 	if along.x != 0:
 		return [Vector2i(0, 1), Vector2i(0, -1)]
 	return [Vector2i(1, 0), Vector2i(-1, 0)]
-
-
-func _try_carve_pen_at(branch: Vector2i, dir: Vector2i) -> bool:
-	var perp: Vector2i = _perp_dirs(dir)[0]
-	var pen_cells: Array[Vector2i] = []
-	const DEPTH: int = 2
-	const WIDTH: int = 2
-	for d in range(1, DEPTH + 1):
-		for w in range(WIDTH):
-			var p: Vector2i = branch + dir * d + perp * w
-			if p.x < 1 or p.x >= _tile_w - 1 or p.y < 1 or p.y >= _tile_h - 1:
-				return false
-			if _get_tile(p.x, p.y) != "#".unicode_at(0):
-				return false
-			pen_cells.append(p)
-	for cell: Vector2i in pen_cells:
-		_set_tile(cell.x, cell.y, "P")
-	_set_tile(branch.x, branch.y, "G")
-	return true
 
 
 # ---------------- Tile helpers ----------------

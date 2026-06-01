@@ -56,10 +56,10 @@ func get_nav() -> MazeNav:
 func set_dynamic_blockers(positions: Array) -> void:
 	if _nav == null:
 		return
-	_nav.clear_blockers()
+	_nav.clear_dynamic_blockers()
 	for p in positions:
 		if p is Vector3:
-			_nav.add_blocker(p)
+			_nav.add_dynamic_blocker(p)
 
 
 func set_door_blocking(blocked: bool, world_pos: Vector3 = Vector3.ZERO) -> void:
@@ -86,7 +86,7 @@ func _apply_coat_mesh() -> void:
 		if mesh_res != null:
 			model.mesh = mesh_res
 			_mesh_loaded = true
-	model.scale = Vector3.ONE * model_scale
+	model.scale = PupColorsScript.scaled_body(model_scale)
 	var mat := _make_coat_material(PupColorsScript.get_color(coat_index))
 	_apply_model_material(mat)
 

@@ -1,8 +1,8 @@
 [
-  {"id": "bow_red", "slot": "hat", "name": "Red Bow", "cost": 25, "shape": "bow", "color": "#E85D5D", "offset": [0, 0.42, 0], "scale": 0.18},
-  {"id": "cap_blue", "slot": "hat", "name": "Blue Cap", "cost": 30, "shape": "cap", "color": "#4A7FD4", "offset": [0, 0.44, 0], "scale": 0.2},
-  {"id": "beanie_orange", "slot": "hat", "name": "Orange Beanie", "cost": 28, "shape": "cap", "color": "#E8883A", "offset": [0, 0.46, 0], "scale": 0.19},
-  {"id": "goggles_silver", "slot": "hat", "name": "Silver Goggles", "cost": 32, "shape": "goggles", "color": "#B8C4D0", "offset": [0, 0.38, 0.06], "scale": 0.16},
+  {"id": "bow_red", "slot": "hat", "name": "Red Bow", "cost": 25, "shape": "bow", "color": "#E85D5D", "offset": [0, 0.52, 0], "scale": 0.18},
+  {"id": "cap_blue", "slot": "hat", "name": "Blue Cap", "cost": 30, "shape": "cap", "color": "#4A7FD4", "offset": [0, 0.56, 0], "scale": 0.2},
+  {"id": "beanie_orange", "slot": "hat", "name": "Orange Beanie", "cost": 28, "shape": "cap", "color": "#E8883A", "offset": [0, 0.58, 0], "scale": 0.19},
+  {"id": "goggles_silver", "slot": "hat", "name": "Silver Goggles", "cost": 32, "shape": "goggles", "color": "#B8C4D0", "offset": [0, 0.48, 0.06], "scale": 0.16},
   {"id": "bandana_green", "slot": "collar", "name": "Green Bandana", "cost": 20, "shape": "bandana", "color": "#4CAF6A", "offset": [0, 0.28, 0.08], "scale": 0.22},
   {"id": "star_gold", "slot": "collar", "name": "Gold Star Pin", "cost": 35, "shape": "star_pin", "color": "#E8C547", "offset": [0, 0.3, 0.1], "scale": 0.12},
   {"id": "bowtie_teal", "slot": "collar", "name": "Teal Bowtie", "cost": 22, "shape": "bow", "color": "#3AAFA9", "offset": [0, 0.27, 0.1], "scale": 0.14},

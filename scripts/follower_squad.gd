@@ -2,6 +2,11 @@ class_name FollowerSquad
 extends Node
 
 const FollowerPuppyScript := preload("res://scripts/follower_puppy.gd")
+const FollowerSnapScript := preload("res://scripts/follower_snap.gd")
+
+const RING_CAP: int = 512
+const REAR_LOD_INDEX: int = 6
+const PATH_REBUILD_BUDGET: int = 2
 
 @export var max_followers: int = 5
 @export var follow_spacing: float = 0.95
@@ -15,7 +20,10 @@ const FollowerPuppyScript := preload("res://scripts/follower_puppy.gd")
 
 var _collar_id: String = ""
 var _followers: Array[Node3D] = []
-var _history: Array[Vector3] = []
+var _history_ring: Array = []
+var _hist_head: int = 0
+var _hist_size: int = 0
+var _trail_length_cached: float = 0.0
 var _nav: MazeNav
 var _floor_y: float = 0.24
 var _parent: Node3D
@@ -23,10 +31,20 @@ var _active: bool = false
 var _player_idle_time: float = 0.0
 var _last_player_pos: Vector3 = Vector3.ZERO
 var _has_last_player_pos: bool = false
+var _snap_mode: int = FollowerSnapScript.MODE_TRAIL
+var _path_budget: int = PATH_REBUILD_BUDGET
+var _path_budget_frame: int = -1
+var _tick_parity: int = 0
+var _held_at_gather: Array[bool] = []
+var _snap_grace_until_ms: int = 0
 
 
 func is_active() -> bool:
 	return _active
+
+
+func set_snap_mode(mode: int) -> void:
+	_snap_mode = FollowerSnapScript.clamp_mode(mode)
 
 
 func activate(nav: MazeNav, floor_y: float, parent: Node3D, seed_pos: Vector3 = Vector3.ZERO) -> void:
@@ -39,10 +57,10 @@ func activate(nav: MazeNav, floor_y: float, parent: Node3D, seed_pos: Vector3 = 
 
 
 func seed_history(pos: Vector3) -> void:
-	_history.clear()
+	_clear_history()
 	var p := pos
 	p.y = _floor_y
-	_history.append(p)
+	_ring_push_back(p)
 	_last_player_pos = p
 	_has_last_player_pos = true
 	_player_idle_time = 0.0
@@ -73,20 +91,74 @@ func add_follower(spawn_pos: Vector3, _breed_index: int = -1) -> bool:
 	return true
 
 
-func spawn_in_pen(nav: MazeNav, pen_center: Vector3, floor_y: float, parent: Node3D, seed_pos: Vector3 = Vector3.ZERO) -> void:
-	if not _active:
-		clear()
+func release_pen_followers(
+	positions: Array[Vector3],
+	nav: MazeNav,
+	floor_y: float,
+	parent: Node3D,
+	seed_pos: Vector3,
+	snap_grace_sec: float = 5.0
+) -> int:
+	clear()
+	var seed: Vector3 = seed_pos
+	if seed == Vector3.ZERO and not positions.is_empty():
+		seed = positions[0]
+	activate(nav, floor_y, parent, seed)
+	_snap_grace_until_ms = Time.get_ticks_msec() + int(snap_grace_sec * 1000.0)
+	var spawned := 0
+	for pos in positions:
+		if _followers.size() >= max_followers:
+			break
+		if add_follower(pos, -1):
+			spawned += 1
+	return spawned
+
+
+func spawn_rescue_group_at_positions(
+	positions: Array[Vector3],
+	nav: MazeNav,
+	floor_y: float,
+	parent: Node3D,
+	seed_pos: Vector3 = Vector3.ZERO
+) -> int:
+	clear()
+	var seed: Vector3 = seed_pos
+	if seed == Vector3.ZERO and not positions.is_empty():
+		seed = positions[0]
+	activate(nav, floor_y, parent, seed)
+	var spawned := 0
+	for pos in positions:
+		if _followers.size() >= max_followers:
+			break
+		if add_follower(pos, -1):
+			spawned += 1
+	return spawned
+
+
+func spawn_rescue_group(
+	count: int,
+	nav: MazeNav,
+	pen_center: Vector3,
+	floor_y: float,
+	parent: Node3D,
+	seed_pos: Vector3 = Vector3.ZERO
+) -> int:
+	clear()
 	activate(nav, floor_y, parent, seed_pos if seed_pos != Vector3.ZERO else pen_center)
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
-	var slots: int = maxi(0, max_followers - _followers.size())
-	for i in slots:
+	var spawned := 0
+	for i in count:
+		if _followers.size() >= max_followers:
+			break
 		var offset := Vector3(
 			rng.randf_range(-0.35, 0.35),
 			0.0,
 			rng.randf_range(-0.35, 0.35)
 		)
-		add_follower(pen_center + offset, -1)
+		if add_follower(pen_center + offset, -1):
+			spawned += 1
+	return spawned
 
 
 func rebind_for_level(nav: MazeNav, floor_y: float, parent: Node3D, player_start: Vector3) -> void:
@@ -98,14 +170,13 @@ func rebind_for_level(nav: MazeNav, floor_y: float, parent: Node3D, player_start
 	_prune_invalid_followers()
 	if _followers.is_empty():
 		_active = false
-		_history.clear()
+		_clear_history()
 		return
 	_active = true
 	seed_history(player_start)
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
-	for i in range(_followers.size()):
-		var pup: Node3D = _followers[i]
+	for pup: Node3D in _followers:
 		if not is_instance_valid(pup):
 			continue
 		if pup.get_parent() != parent:
@@ -138,35 +209,72 @@ func clear() -> void:
 		if is_instance_valid(f):
 			f.queue_free()
 	_followers.clear()
-	_history.clear()
+	_held_at_gather.clear()
+	_snap_grace_until_ms = 0
+	_clear_history()
 	_active = false
 	_parent = null
 	_has_last_player_pos = false
 	_player_idle_time = 0.0
 
 
-func tick(delta: float, player_pos: Vector3, gather_point: Vector3 = Vector3.ZERO, speed_mult: float = 1.0) -> void:
+func tick(
+	delta: float,
+	player_pos: Vector3,
+	gather_point: Vector3 = Vector3.ZERO,
+	speed_mult: float = 1.0,
+	snap_mode: int = FollowerSnapScript.MODE_TRAIL
+) -> void:
 	if not _active:
 		return
+	_snap_mode = FollowerSnapScript.clamp_mode(snap_mode)
+	_reset_path_budget_if_needed()
+	_tick_parity += 1
 	_update_player_idle(player_pos, delta)
 	_record_player(player_pos)
-	if _history.is_empty():
+	if _hist_size == 0:
 		return
 	var count: int = _followers.size()
+	var trail_avail: float = _trail_length_cached
 	var gathering: bool = gather_point != Vector3.ZERO
 	var gather_blend: float = 0.0
 	if gathering:
 		gather_blend = 1.0
 	elif _player_idle_time > 0.12:
 		gather_blend = clampf((_player_idle_time - 0.12) / gather_blend_time, 0.0, 1.0)
+	if not gathering:
+		_held_at_gather.clear()
 	for i in range(count):
 		var pup: Node3D = _followers[i]
 		if not is_instance_valid(pup):
 			continue
-		var target: Vector3 = _trail_target_for_index(i, player_pos, pup.global_position)
-		var speed_scale: float = 1.0
+		while _held_at_gather.size() <= i:
+			_held_at_gather.append(false)
 		var need_dist: float = follow_spacing * float(i + 1)
-		var trail_avail: float = _trail_length()
+		var use_lod: bool = i >= REAR_LOD_INDEX and (_tick_parity % 2) != 0
+		if gathering:
+			var center: Vector3 = gather_point
+			center.y = _floor_y
+			var ring := _ring_offset(i, count, 0.38)
+			var gather_target: Vector3 = center + ring
+			var pup_pos: Vector3 = pup.global_position
+			pup_pos.y = _floor_y
+			if pup_pos.distance_to(center) <= gather_radius * 0.92:
+				_held_at_gather[i] = true
+			if _held_at_gather[i]:
+				pup.call("set_target", gather_target)
+				pup.call("update_follow", delta, 0.08)
+				continue
+			var target: Vector3 = gather_target
+			var speed_scale: float = 1.0 + gather_blend * 2.2 if gather_blend > 0.0 else 2.4
+			pup.call("set_path_rebuild_allowed", _consume_path_budget())
+			pup.call("set_target", target)
+			pup.call("update_follow", delta, speed_scale * speed_mult)
+			continue
+		if use_lod and need_dist <= trail_avail + follow_spacing:
+			continue
+		var target: Vector3 = _trail_target_for_index(i, player_pos, pup.global_position, trail_avail)
+		var speed_scale: float = 1.0
 		if need_dist > trail_avail - follow_spacing * 0.25:
 			speed_scale *= clampf(1.35 + (need_dist - trail_avail) * 0.4, 1.35, 3.0)
 		if gather_blend > 0.0:
@@ -185,8 +293,55 @@ func tick(delta: float, player_pos: Vector3, gather_point: Vector3 = Vector3.ZER
 				target = trail_target.lerp(gather_target, gather_blend)
 			target = _clamp_min_distance_from(target, player_pos, min_player_clearance)
 			speed_scale = 1.0 + gather_blend * 2.2
+		var stuck_time: float = float(pup.call("get_stuck_time"))
+		var snap_allowed: bool = Time.get_ticks_msec() >= _snap_grace_until_ms
+		if snap_allowed and (
+			FollowerSnapScript.should_snap(
+				_snap_mode, i, pup.global_position, player_pos,
+				need_dist, trail_avail, follow_spacing, stuck_time
+			) or bool(pup.call("needs_snap_request"))
+		):
+			_snap_puppy(pup, i, count, player_pos, need_dist, trail_avail)
+			stuck_time = 0.0
+		pup.call("set_path_rebuild_allowed", _consume_path_budget())
 		pup.call("set_target", target)
 		pup.call("update_follow", delta, speed_scale * speed_mult)
+
+
+func _snap_puppy(
+	pup: Node3D,
+	index: int,
+	count: int,
+	player_pos: Vector3,
+	need_dist: float,
+	trail_avail: float
+) -> void:
+	var dist: float = minf(need_dist, maxf(follow_spacing * 0.55, trail_avail - follow_spacing * 0.35))
+	var snap_pos: Vector3 = _sample_trail(dist)
+	if snap_pos == Vector3.ZERO:
+		snap_pos = player_pos
+	snap_pos.y = _floor_y
+	if _nav != null and not _nav.is_position_walkable(snap_pos):
+		var ring := _ring_offset(index, count, follow_spacing * 0.45)
+		snap_pos = player_pos + ring
+		snap_pos.y = _floor_y
+		if _nav != null:
+			snap_pos = _nav.clamp_to_walkable(snap_pos, _floor_y)
+	pup.call("snap_to", snap_pos)
+
+
+func _reset_path_budget_if_needed() -> void:
+	var frame: int = Engine.get_physics_frames()
+	if frame != _path_budget_frame:
+		_path_budget_frame = frame
+		_path_budget = PATH_REBUILD_BUDGET
+
+
+func _consume_path_budget() -> bool:
+	if _path_budget <= 0:
+		return false
+	_path_budget -= 1
+	return true
 
 
 func _clamp_min_distance_from(target: Vector3, center: Vector3, min_dist: float) -> Vector3:
@@ -205,11 +360,15 @@ func _clamp_min_distance_from(target: Vector3, center: Vector3, min_dist: float)
 	return target
 
 
-func _trail_target_for_index(index: int, player_pos: Vector3, pup_pos: Vector3) -> Vector3:
+func _trail_target_for_index(
+	index: int,
+	player_pos: Vector3,
+	pup_pos: Vector3,
+	trail_avail: float
+) -> Vector3:
 	var dist: float = follow_spacing * float(index + 1)
-	var available: float = _trail_length()
-	if dist > available - follow_spacing * 0.25:
-		dist = maxf(follow_spacing * 0.55, available - follow_spacing * 0.35)
+	if dist > trail_avail - follow_spacing * 0.25:
+		dist = maxf(follow_spacing * 0.55, trail_avail - follow_spacing * 0.35)
 	var target: Vector3 = _sample_trail(dist)
 	if target == Vector3.ZERO:
 		target = player_pos
@@ -248,62 +407,107 @@ func _ring_offset(index: int, total: int, radius: float) -> Vector3:
 	return Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
 
 
+func _clear_history() -> void:
+	_history_ring.clear()
+	_hist_head = 0
+	_hist_size = 0
+	_trail_length_cached = 0.0
+
+
+func _ring_get(logical_idx: int) -> Vector3:
+	return _history_ring[(_hist_head + logical_idx) % RING_CAP] as Vector3
+
+
+func _ring_set(logical_idx: int, value: Vector3) -> void:
+	if _history_ring.size() < RING_CAP:
+		_history_ring.resize(RING_CAP)
+	_history_ring[(_hist_head + logical_idx) % RING_CAP] = value
+
+
+func _ring_push_back(value: Vector3) -> void:
+	if _hist_size > 0:
+		_trail_length_cached += Vector2(value.x, value.z).distance_to(
+			Vector2(_ring_get(_hist_size - 1).x, _ring_get(_hist_size - 1).z)
+		)
+	if _hist_size >= RING_CAP:
+		if _hist_size >= 2:
+			_trail_length_cached -= Vector2(_ring_get(0).x, _ring_get(0).z).distance_to(
+				Vector2(_ring_get(1).x, _ring_get(1).z)
+			)
+		elif _hist_size == 1:
+			_trail_length_cached = 0.0
+		_hist_head = (_hist_head + 1) % RING_CAP
+		_hist_size -= 1
+	var tail_idx: int = (_hist_head + _hist_size) % RING_CAP
+	if _history_ring.size() < RING_CAP:
+		_history_ring.resize(RING_CAP)
+	_history_ring[tail_idx] = value
+	_hist_size += 1
+
+
 func _record_player(player_pos: Vector3) -> void:
 	var p := player_pos
 	p.y = _floor_y
-	if _history.is_empty():
-		_history.append(p)
+	if _hist_size == 0:
+		_ring_push_back(p)
 		return
-	var last: Vector3 = _history[_history.size() - 1]
+	var last: Vector3 = _ring_get(_hist_size - 1)
 	if Vector2(p.x, p.z).distance_to(Vector2(last.x, last.z)) >= min_history_step:
-		if _history.size() >= 2:
-			var prev: Vector3 = _history[_history.size() - 2]
+		if _hist_size >= 2:
+			var prev: Vector3 = _ring_get(_hist_size - 2)
 			var new_dir := Vector2(p.x - last.x, p.z - last.z)
 			var old_dir := Vector2(last.x - prev.x, last.z - prev.z)
 			if new_dir.length() > 0.001 and old_dir.length() > 0.001:
 				if new_dir.normalized().dot(old_dir.normalized()) < 0.25:
 					var min_keep: int = _min_history_keep()
-					while _history.size() > min_keep:
-						_history.remove_at(0)
-		_history.append(p)
+					while _hist_size > min_keep:
+						if _hist_size >= 2:
+							_trail_length_cached -= Vector2(_ring_get(0).x, _ring_get(0).z).distance_to(
+								Vector2(_ring_get(1).x, _ring_get(1).z)
+							)
+						_hist_head = (_hist_head + 1) % RING_CAP
+						_hist_size -= 1
+		_ring_push_back(p)
 	else:
-		_history[_history.size() - 1] = p
+		if _hist_size >= 2:
+			_trail_length_cached -= Vector2(last.x, last.z).distance_to(
+				Vector2(_ring_get(_hist_size - 2).x, _ring_get(_hist_size - 2).z)
+			)
+		_ring_set(_hist_size - 1, p)
+		if _hist_size >= 2:
+			_trail_length_cached += Vector2(p.x, p.z).distance_to(
+				Vector2(_ring_get(_hist_size - 2).x, _ring_get(_hist_size - 2).z)
+			)
 	var capacity: int = _history_capacity()
-	while _history.size() > capacity:
-		_history.remove_at(0)
+	while _hist_size > capacity:
+		if _hist_size >= 2:
+			_trail_length_cached -= Vector2(_ring_get(0).x, _ring_get(0).z).distance_to(
+				Vector2(_ring_get(1).x, _ring_get(1).z)
+			)
+		_hist_head = (_hist_head + 1) % RING_CAP
+		_hist_size -= 1
 
 
 func _history_capacity() -> int:
 	var slots: int = maxi(max_followers, _followers.size())
 	var needed_dist: float = follow_spacing * float(slots + 3)
-	return maxi(max_history, int(needed_dist / min_history_step) + 96)
+	return mini(RING_CAP, maxi(max_history, int(needed_dist / min_history_step) + 96))
 
 
 func _min_history_keep() -> int:
 	var slots: int = maxi(max_followers, _followers.size())
-	return mini(_history.size(), int((follow_spacing * float(slots + 1)) / min_history_step) + 48)
-
-
-func _trail_length() -> float:
-	if _history.size() < 2:
-		return 0.0
-	var total: float = 0.0
-	for i in range(_history.size() - 1, 0, -1):
-		var a: Vector3 = _history[i]
-		var b: Vector3 = _history[i - 1]
-		total += Vector2(a.x, a.z).distance_to(Vector2(b.x, b.z))
-	return total
+	return mini(_hist_size, int((follow_spacing * float(slots + 1)) / min_history_step) + 48)
 
 
 func _sample_trail(distance_behind: float) -> Vector3:
-	if _history.is_empty():
+	if _hist_size == 0:
 		return Vector3.ZERO
-	if _history.size() == 1 or distance_behind <= 0.0:
-		return _history[_history.size() - 1]
+	if _hist_size == 1 or distance_behind <= 0.0:
+		return _ring_get(_hist_size - 1)
 	var traveled: float = 0.0
-	for i in range(_history.size() - 1, 0, -1):
-		var a: Vector3 = _history[i]
-		var b: Vector3 = _history[i - 1]
+	for i in range(_hist_size - 1, 0, -1):
+		var a: Vector3 = _ring_get(i)
+		var b: Vector3 = _ring_get(i - 1)
 		var seg: float = Vector2(a.x, a.z).distance_to(Vector2(b.x, b.z))
 		if seg <= 0.0001:
 			continue
@@ -311,7 +515,7 @@ func _sample_trail(distance_behind: float) -> Vector3:
 			var t: float = (distance_behind - traveled) / seg
 			return a.lerp(b, t)
 		traveled += seg
-	return _history[0]
+	return _ring_get(0)
 
 
 func snap_all_to(pos: Vector3) -> void:
@@ -324,9 +528,23 @@ func snap_all_to(pos: Vector3) -> void:
 		var ring := _ring_offset(i, count, 0.35)
 		var p := pos + ring
 		p.y = _floor_y
-		pup.global_position = p
-		if pup.has_method("rebind_nav"):
-			pup.call("rebind_nav", _nav, p)
+		pup.call("snap_to", p)
+
+
+func count_escorted_at(exit_pos: Vector3, leader_pos: Vector3) -> int:
+	var n := 0
+	for pup in _followers:
+		if not is_instance_valid(pup):
+			continue
+		var p: Vector3 = pup.global_position
+		p.y = 0.0
+		var exit_flat := exit_pos
+		exit_flat.y = 0.0
+		var leader_flat := leader_pos
+		leader_flat.y = 0.0
+		if p.distance_to(exit_flat) <= gather_radius or p.distance_to(leader_flat) <= gather_radius:
+			n += 1
+	return n
 
 
 func count_gathered_at(gather_pos: Vector3) -> int:

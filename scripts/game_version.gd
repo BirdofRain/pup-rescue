@@ -1,13 +1,12 @@
 class_name GameVersion
 extends RefCounted
 
-const VERSION := "0.4.0"
+const VERSION := "0.7.0"
 
-const PATCH_NOTES_TEXT := """• Name your leader pup on the main menu
-• Save Progress after level 2 (local device)
-• Local leaderboard: level, squad size, rescues
-• Squad cap: 5 base, up to 10 via shop
-• Followers follow your path around corners"""
+const PATCH_NOTES_TEXT := """• Rescue room is a side alcove — main path to exit stays open
+• Key always appears before the rescue room branch
+• Key = ring + line; boosts = stars/hearts; rounder hats
+• Removed rescue room sign and marker clutter"""
 
 
 static func version_label() -> String:

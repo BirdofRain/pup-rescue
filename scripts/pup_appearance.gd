@@ -88,11 +88,11 @@ func _build_accessory_mesh(entry: Dictionary) -> MeshInstance3D:
 			sphere.height = scale_v
 			mesh_inst.mesh = sphere
 		"cap":
-			var cyl := CylinderMesh.new()
-			cyl.top_radius = scale_v * 0.85
-			cyl.bottom_radius = scale_v
-			cyl.height = scale_v * 0.5
-			mesh_inst.mesh = cyl
+			var sphere := SphereMesh.new()
+			sphere.radius = scale_v * 0.52
+			sphere.height = scale_v * 0.95
+			mesh_inst.mesh = sphere
+			mesh_inst.position.y += scale_v * 0.22
 		"bandana":
 			var plane := PlaneMesh.new()
 			plane.size = Vector2(scale_v * 1.4, scale_v * 0.7)

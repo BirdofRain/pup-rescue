@@ -4,6 +4,16 @@ extends RefCounted
 const MESH_PATH := "res://assets/VoxelHusky.obj"
 ## Voxel OBJ models face +X; Godot movement forward is -Z.
 const MODEL_YAW_OFFSET: float = -PI * 0.5
+## Body length (X), height (Y), width (Z) multipliers on uniform scale.
+const MODEL_BODY_SCALE := Vector3(1.32, 1.0, 0.86)
+
+
+static func scaled_body(uniform: float) -> Vector3:
+	return Vector3(
+		uniform * MODEL_BODY_SCALE.x,
+		uniform * MODEL_BODY_SCALE.y,
+		uniform * MODEL_BODY_SCALE.z
+	)
 
 static var _names: PackedStringArray = PackedStringArray([
 	"Golden", "Cream", "Brown", "Gray", "Tan", "Rose",
