@@ -114,8 +114,8 @@ func generate_level(
 		var by: int = next.y * 2 + 1
 
 		# Knock down wall between them (midpoint)
-		var mx: int = (ax + bx) / 2
-		var my: int = (ay + by) / 2
+		var mx: int = (ax + bx) >> 1
+		var my: int = (ay + by) >> 1
 
 		_set_tile(bx, by, ".")
 		_set_tile(mx, my, ".")
@@ -174,8 +174,8 @@ func _collect_floor_tiles() -> Array[Vector2i]:
 
 
 func _quadrant_of(tile: Vector2i) -> int:
-	var cx: int = _tile_w / 2
-	var cz: int = _tile_h / 2
+	var cx: int = _tile_w >> 1
+	var cz: int = _tile_h >> 1
 	var east: bool = tile.x >= cx
 	var south: bool = tile.y >= cz
 	if not east and not south:
@@ -253,7 +253,7 @@ func _place_tiles_at(positions: Array[Vector2i], tile_char: String) -> void:
 		_set_tile(pos.x, pos.y, tile_char)
 
 
-func _place_speed_pickups(rng: RandomNumberGenerator, level_index: int, start: Vector2i) -> void:
+func _place_speed_pickups(rng: RandomNumberGenerator, level_index: int, _start: Vector2i) -> void:
 	var candidates: Array[Vector2i] = _collect_floor_tiles()
 	if candidates.size() < 4:
 		return
@@ -413,7 +413,7 @@ func createRescueRoom(
 	var interior: Array[Vector2i] = []
 	for d in range(1, interior_depth + 1):
 		for w in range(interior_width):
-			var offset: int = w - (interior_width - 1) / 2
+			var offset: int = w - ((interior_width - 1) >> 1)
 			var cell: Vector2i = door + side_dir * d + perp * offset
 			if not _cell_in_bounds(cell):
 				return false
@@ -621,7 +621,7 @@ func _random_floor_tile(rng: RandomNumberGenerator) -> Vector2i:
 				return Vector2i(xx, yy)
 
 	# Absolute fallback
-	return Vector2i(_tile_w / 2, _tile_h / 2)
+	return Vector2i(_tile_w >> 1, _tile_h >> 1)
 
 # ---------------- BFS helpers (typed arrays) ----------------
 
@@ -651,7 +651,7 @@ func _bfs_farthest(start: Vector2i) -> Vector2i:
 		head += 1
 
 		var cx: int = cur_idx % w
-		var cy: int = cur_idx / w
+		var cy: int = int(cur_idx / float(w))
 		var cd: int = dist[cur_idx]
 
 		if cd > best_d:
@@ -673,7 +673,7 @@ func _bfs_farthest(start: Vector2i) -> Vector2i:
 			dist[ni] = cd + 1
 			q.append(ni)
 
-	return Vector2i(best_idx % w, best_idx / w)
+	return Vector2i(best_idx % w, int(best_idx / float(w)))
 
 func _bfs_path(start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
 	var w: int = _tile_w
@@ -702,7 +702,7 @@ func _bfs_path(start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
 			break
 
 		var cx: int = cur_idx % w
-		var cy: int = cur_idx / w
+		var cy: int = int(cur_idx / float(w))
 
 		for d: Vector2i in DIRS:
 			var nx: int = cx + d.x
@@ -725,7 +725,7 @@ func _bfs_path(start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
 	var path: Array[Vector2i] = []
 	var cur2: int = g_idx
 	while true:
-		path.push_front(Vector2i(cur2 % w, cur2 / w))
+		path.push_front(Vector2i(cur2 % w, int(cur2 / float(w))))
 		if cur2 == s_idx:
 			break
 		cur2 = prev[cur2]

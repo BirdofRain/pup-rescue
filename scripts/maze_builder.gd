@@ -209,9 +209,9 @@ func _mark_endpoint(d: Dictionary, vx: int, vz: int) -> void:
 # -------------------- rescue room --------------------
 
 func _build_rescue_room(
-	lines: PackedStringArray,
-	cols: int,
-	rows: int,
+	_lines: PackedStringArray,
+	_cols: int,
+	_rows: int,
 	maze_root: Node3D,
 	info: Dictionary
 ) -> void:
@@ -259,8 +259,6 @@ func _add_rescue_gate_block(
 
 	var l_walk: bool = _is_walkable(lines, x - 1, z, cols, rows)
 	var r_walk: bool = _is_walkable(lines, x + 1, z, cols, rows)
-	var u_walk: bool = _is_walkable(lines, x, z - 1, cols, rows)
-	var d_walk: bool = _is_walkable(lines, x, z + 1, cols, rows)
 
 	# Horizontal passage (enter east/west) -> vertical gate bar; vertical passage -> horizontal bar.
 	var horizontal_passage: bool = l_walk or r_walk

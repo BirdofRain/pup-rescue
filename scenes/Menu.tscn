@@ -18,157 +18,225 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+mouse_filter = 2
 color = Color(0.55, 0.72, 0.95, 1)
 
-[node name="Center" type="CenterContainer" parent="."]
+[node name="RootMargin" type="MarginContainer" parent="."]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
 
-[node name="Panel" type="PanelContainer" parent="Center"]
-custom_minimum_size = Vector2(420, 580)
-
-[node name="VBox" type="VBoxContainer" parent="Center/Panel"]
+[node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 12
 
-[node name="Title" type="Label" parent="Center/Panel/VBox"]
+[node name="Scroll" type="ScrollContainer" parent="RootMargin/RootVBox"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 28
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+
+[node name="SettingsPanel" type="PanelContainer" parent="RootMargin/RootVBox/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(400, 0)
+
+[node name="VBox" type="VBoxContainer" parent="RootMargin/RootVBox/Scroll/SettingsPanel"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
 text = "Pup Rescue"
 horizontal_alignment = 1
 
-[node name="Subtitle" type="Label" parent="Center/Panel/VBox"]
+[node name="Subtitle" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
+theme_override_font_sizes/font_size = 15
 text = "Guide your pup through the maze"
 horizontal_alignment = 1
 
-[node name="NameRow" type="HBoxContainer" parent="Center/Panel/VBox"]
+[node name="SectionPup" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
-alignment = 1
-theme_override_constants/separation = 8
+theme_override_font_sizes/font_size = 14
+text = "Your pup"
 
-[node name="NameLabel" type="Label" parent="Center/Panel/VBox/NameRow"]
+[node name="NameRow" type="HBoxContainer" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
-text = "Leader:"
+theme_override_constants/separation = 10
 
-[node name="PupNameEdit" type="LineEdit" parent="Center/Panel/VBox/NameRow"]
-custom_minimum_size = Vector2(220, 44)
+[node name="NameLabel" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox/NameRow"]
+custom_minimum_size = Vector2(64, 0)
 layout_mode = 2
-theme_override_font_sizes/font_size = 20
-placeholder_text = "Tap a name or type here…"
-alignment = 1
+text = "Name"
+
+[node name="PupNameEdit" type="LineEdit" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox/NameRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 44)
+theme_override_font_sizes/font_size = 18
+placeholder_text = "Type a name or pick below"
 caret_blink = true
 
-[node name="NamePresets" type="HBoxContainer" parent="Center/Panel/VBox"]
+[node name="NamePresets" type="FlowContainer" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
-alignment = 1
-theme_override_constants/separation = 6
-
-[node name="CoatRow" type="HBoxContainer" parent="Center/Panel/VBox"]
-layout_mode = 2
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
 alignment = 1
 
-[node name="CoatLabel" type="Label" parent="Center/Panel/VBox/CoatRow"]
+[node name="CoatRow" type="HBoxContainer" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
-text = "Coat:"
+theme_override_constants/separation = 10
 
-[node name="CoatPreview" type="ColorRect" parent="Center/Panel/VBox/CoatRow"]
-custom_minimum_size = Vector2(28, 28)
+[node name="CoatLabel" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox/CoatRow"]
+custom_minimum_size = Vector2(64, 0)
+layout_mode = 2
+text = "Coat"
+
+[node name="CoatPreview" type="ColorRect" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox/CoatRow"]
+custom_minimum_size = Vector2(32, 32)
 layout_mode = 2
 color = Color(0.85, 0.72, 0.38, 1)
 
-[node name="CoatName" type="Label" parent="Center/Panel/VBox/CoatRow"]
+[node name="CoatName" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox/CoatRow"]
 layout_mode = 2
+size_flags_horizontal = 3
 text = "Golden"
 
-[node name="CoatSwatches" type="HBoxContainer" parent="Center/Panel/VBox"]
+[node name="CoatSwatches" type="FlowContainer" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
 alignment = 1
-theme_override_constants/separation = 8
 
-[node name="DifficultyRow" type="HBoxContainer" parent="Center/Panel/VBox"]
+[node name="SectionSettings" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "Game settings"
+
+[node name="DifficultyHeader" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
+layout_mode = 2
+text = "Difficulty"
+
+[node name="DifficultyFlow" type="FlowContainer" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
+layout_mode = 2
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
 alignment = 1
-theme_override_constants/separation = 8
 
-[node name="DifficultyLabel" type="Label" parent="Center/Panel/VBox/DifficultyRow"]
+[node name="DifficultyHintLabel" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
-text = "Mode:"
-
-[node name="DifficultyHintLabel" type="Label" parent="Center/Panel/VBox"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 11
+theme_override_font_sizes/font_size = 13
 theme_override_colors/font_color = Color(0.34, 0.4, 0.5, 1)
 autowrap_mode = 3
 text = "Same-size maze every level — new layout each time"
 horizontal_alignment = 1
 
-[node name="SnapRow" type="HBoxContainer" parent="Center/Panel/VBox"]
+[node name="SnapHeader" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
+text = "Follower snap"
+
+[node name="SnapFlow" type="FlowContainer" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
+layout_mode = 2
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
 alignment = 1
-theme_override_constants/separation = 8
 
-[node name="SnapLabel" type="Label" parent="Center/Panel/VBox/SnapRow"]
+[node name="TouchHeader" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
-text = "Snap:"
+text = "Touch controls"
 
-[node name="CoinsLabel" type="Label" parent="Center/Panel/VBox"]
+[node name="TouchFlow" type="FlowContainer" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
+alignment = 1
+
+[node name="TouchHintLabel" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+theme_override_colors/font_color = Color(0.34, 0.4, 0.5, 1)
+autowrap_mode = 3
+text = "Tap the maze to move your pup."
+horizontal_alignment = 1
+
+[node name="SectionStatus" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "Progress"
+
+[node name="CoinsLabel" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
 text = "Treat Coins: 0"
 horizontal_alignment = 1
 
-[node name="ProgressHintLabel" type="Label" parent="Center/Panel/VBox"]
+[node name="ProgressHintLabel" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 12
+theme_override_font_sizes/font_size = 13
 theme_override_colors/font_color = Color(0.34, 0.4, 0.5, 1)
-text = "Beat level 1 to unlock save & leaderboard"
+autowrap_mode = 3
+text = "Beat level 2 to unlock save & leaderboard"
 horizontal_alignment = 1
 
-[node name="PlayBtn" type="Button" parent="Center/Panel/VBox"]
-custom_minimum_size = Vector2(0, 48)
-layout_mode = 2
-text = "New Game"
-
-[node name="ContinueBtn" type="Button" parent="Center/Panel/VBox"]
-custom_minimum_size = Vector2(0, 48)
-layout_mode = 2
-text = "Continue"
-
-[node name="WardrobeBtn" type="Button" parent="Center/Panel/VBox"]
-custom_minimum_size = Vector2(0, 44)
-layout_mode = 2
-text = "Wardrobe"
-
-[node name="TestBtn" type="Button" parent="Center/Panel/VBox"]
-custom_minimum_size = Vector2(0, 44)
-layout_mode = 2
-text = "Test Maze"
-
-[node name="LeaderboardBtn" type="Button" parent="Center/Panel/VBox"]
-custom_minimum_size = Vector2(0, 44)
-layout_mode = 2
-text = "Leaderboard"
-
-[node name="VersionLabel" type="Label" parent="Center/Panel/VBox"]
+[node name="VersionLabel" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "v0.0.0"
 horizontal_alignment = 1
 
-[node name="PatchNotesLabel" type="Label" parent="Center/Panel/VBox"]
+[node name="PatchNotesLabel" type="Label" parent="RootMargin/RootVBox/Scroll/SettingsPanel/VBox"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 11
+theme_override_font_sizes/font_size = 12
 theme_override_colors/font_color = Color(0.34, 0.4, 0.5, 1)
 autowrap_mode = 3
 text = "Patch notes"
 horizontal_alignment = 1
 
-[connection signal="pressed" from="Center/Panel/VBox/PlayBtn" to="." method="_on_play_pressed"]
-[connection signal="pressed" from="Center/Panel/VBox/ContinueBtn" to="." method="_on_continue_pressed"]
-[connection signal="pressed" from="Center/Panel/VBox/WardrobeBtn" to="." method="_on_wardrobe_pressed"]
-[connection signal="pressed" from="Center/Panel/VBox/TestBtn" to="." method="_on_test_pressed"]
-[connection signal="pressed" from="Center/Panel/VBox/LeaderboardBtn" to="." method="_on_leaderboard_pressed"]
+[node name="PlayPanel" type="PanelContainer" parent="RootMargin/RootVBox"]
+layout_mode = 2
+
+[node name="PlayVBox" type="VBoxContainer" parent="RootMargin/RootVBox/PlayPanel"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="PlayBtn" type="Button" parent="RootMargin/RootVBox/PlayPanel/PlayVBox"]
+custom_minimum_size = Vector2(0, 52)
+layout_mode = 2
+text = "New Game"
+
+[node name="ContinueBtn" type="Button" parent="RootMargin/RootVBox/PlayPanel/PlayVBox"]
+custom_minimum_size = Vector2(0, 48)
+layout_mode = 2
+text = "Continue Saved Game"
+
+[node name="ExtraButtons" type="HBoxContainer" parent="RootMargin/RootVBox/PlayPanel/PlayVBox"]
+layout_mode = 2
+theme_override_constants/separation = 10
+alignment = 1
+
+[node name="WardrobeBtn" type="Button" parent="RootMargin/RootVBox/PlayPanel/PlayVBox/ExtraButtons"]
+layout_mode = 2
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 44)
+text = "Wardrobe"
+
+[node name="TestBtn" type="Button" parent="RootMargin/RootVBox/PlayPanel/PlayVBox/ExtraButtons"]
+layout_mode = 2
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 44)
+text = "Test Maze"
+
+[node name="LeaderboardBtn" type="Button" parent="RootMargin/RootVBox/PlayPanel/PlayVBox/ExtraButtons"]
+layout_mode = 2
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 44)
+text = "Leaderboard"

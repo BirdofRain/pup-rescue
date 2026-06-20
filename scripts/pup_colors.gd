@@ -41,5 +41,5 @@ static func get_color(index: int) -> Color:
 	return _palette[clamp_index(index)] as Color
 
 
-static func get_name(index: int) -> String:
+static func get_coat_name(index: int) -> String:
 	return _names[clamp_index(index)]

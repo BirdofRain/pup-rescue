@@ -26,6 +26,8 @@ const PupColorsScript := preload("res://scripts/pup_colors.gd")
 
 var target_point: Vector3 = Vector3.ZERO
 var has_target: bool = false
+var move_direction: Vector2 = Vector2.ZERO
+var use_direction_input: bool = false
 
 var _nav: MazeNav
 var _mesh_loaded: bool = false
@@ -141,14 +143,37 @@ func _apply_collision_shape() -> void:
 func set_target(p: Vector3) -> void:
 	target_point = p
 	has_target = true
+	use_direction_input = false
+	move_direction = Vector2.ZERO
 	if debug_enabled and debug_log_target:
 		print("Puppy set_target:", p)
+
+
+func set_move_direction(dir: Vector2) -> void:
+	move_direction = dir
+	use_direction_input = dir.length() > 0.01
+	if use_direction_input:
+		has_target = false
+
+
+func clear_move_direction() -> void:
+	move_direction = Vector2.ZERO
+	use_direction_input = false
+
+
+func clear_target() -> void:
+	has_target = false
 
 
 func _physics_process(delta: float) -> void:
 	var prev_pos: Vector3 = global_position
 
-	if not has_target:
+	if use_direction_input:
+		var desired: Vector3 = Vector3(move_direction.x, 0.0, move_direction.y)
+		if desired.length_squared() > 0.0001:
+			desired = desired.normalized() * speed
+		velocity = velocity.move_toward(desired, accel * delta)
+	elif not has_target:
 		velocity = velocity.move_toward(Vector3.ZERO, accel * delta)
 	else:
 		var to_target: Vector3 = target_point - global_position
@@ -180,7 +205,9 @@ func _physics_process(delta: float) -> void:
 	if model == null:
 		return
 	var face_dir: Vector3 = Vector3.ZERO
-	if has_target:
+	if use_direction_input and move_direction.length_squared() > 0.0001:
+		face_dir = Vector3(move_direction.x, 0.0, move_direction.y)
+	elif has_target:
 		face_dir = target_point - global_position
 		face_dir.y = 0.0
 	else:

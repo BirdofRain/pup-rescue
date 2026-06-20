@@ -8,6 +8,7 @@ const _PupColors := preload("res://scripts/pup_colors.gd")
 const _ProgressTracker := preload("res://scripts/progress_tracker.gd")
 const _DifficultyConfig := preload("res://scripts/difficulty_config.gd")
 const _FollowerSnap := preload("res://scripts/follower_snap.gd")
+const _TouchControlConfig := preload("res://scripts/touch_control_config.gd")
 
 var current_level: int = 0
 var total_rescued: int = 0
@@ -21,6 +22,7 @@ var stats: Dictionary = {}
 var leaderboard: Array = []
 var difficulty_mode: int = _DifficultyConfig.MODE_BEGINNER
 var snap_mode: int = _FollowerSnap.MODE_TRAIL
+var touch_control_mode: int = _TouchControlConfig.MODE_FOLLOW_TOUCH
 
 var boot_test_mode: bool = false
 var boot_new_game: bool = false
@@ -55,6 +57,9 @@ func load_save() -> bool:
 	leaderboard = _array_from_variant(data.get("leaderboard", []))
 	difficulty_mode = _DifficultyConfig.clamp_mode(int(data.get("difficulty_mode", _DifficultyConfig.MODE_BEGINNER)))
 	snap_mode = _FollowerSnap.clamp_mode(int(data.get("snap_mode", _FollowerSnap.MODE_TRAIL)))
+	touch_control_mode = _TouchControlConfig.clamp_mode(
+		int(data.get("touch_control_mode", _TouchControlConfig.default_mode()))
+	)
 	return true
 
 
@@ -72,6 +77,7 @@ func save_game() -> void:
 		"leaderboard": leaderboard.duplicate(),
 		"difficulty_mode": difficulty_mode,
 		"snap_mode": snap_mode,
+		"touch_control_mode": touch_control_mode,
 	}
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f == null:
@@ -144,6 +150,14 @@ func get_snap_mode() -> int:
 
 func set_snap_mode(mode: int) -> void:
 	snap_mode = _FollowerSnap.clamp_mode(mode)
+
+
+func get_touch_control_mode() -> int:
+	return _TouchControlConfig.clamp_mode(touch_control_mode)
+
+
+func set_touch_control_mode(mode: int) -> void:
+	touch_control_mode = _TouchControlConfig.clamp_mode(mode)
 
 
 func progress_features_unlocked() -> bool:

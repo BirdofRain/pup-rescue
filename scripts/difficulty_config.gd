@@ -39,7 +39,7 @@ static func maze_cells(level_index: int, mode: int) -> Vector2i:
 		Mode.MEDIUM:
 			if level_index == 0:
 				return Vector2i(7, 7)
-			var step: int = maxi(1, level_index / 2)
+			var step: int = maxi(1, level_index >> 1)
 			var w: int = clampi(9 + step * 2, 9, 17)
 			var h: int = clampi(9 + step * 2, 9, 15)
 			return Vector2i(w, h)

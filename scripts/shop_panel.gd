@@ -15,7 +15,7 @@ var _coins_label: Label
 var _shop_tab_btn: Button
 var _wardrobe_tab_btn: Button
 var _content: VBoxContainer
-var _current_tab: String = "shop"
+var _current_tab: String = "wardrobe"
 var _last_coin_summary: String = ""
 
 const CLR_TEXT := Color(0.14, 0.20, 0.30)
@@ -51,14 +51,13 @@ func setup(save: GameSave) -> void:
 
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 8)
-	_shop_tab_btn = Button.new()
-	_shop_tab_btn.text = "Shop"
-	_shop_tab_btn.pressed.connect(func(): _switch_tab("shop"))
-	tabs.add_child(_shop_tab_btn)
-	_wardrobe_tab_btn = Button.new()
-	_wardrobe_tab_btn.text = "Wardrobe"
+	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
+	_wardrobe_tab_btn = _make_tab_button("👒", "Wardrobe")
 	_wardrobe_tab_btn.pressed.connect(func(): _switch_tab("wardrobe"))
 	tabs.add_child(_wardrobe_tab_btn)
+	_shop_tab_btn = _make_tab_button("$", "Shop")
+	_shop_tab_btn.pressed.connect(func(): _switch_tab("shop"))
+	tabs.add_child(_shop_tab_btn)
 	root.add_child(tabs)
 
 	var scroll := ScrollContainer.new()
@@ -72,7 +71,17 @@ func setup(save: GameSave) -> void:
 	_content.add_theme_constant_override("separation", 6)
 	scroll.add_child(_content)
 
-	_switch_tab("shop")
+	_switch_tab("wardrobe")
+
+
+func _make_tab_button(label: String, tooltip: String) -> Button:
+	var btn := Button.new()
+	btn.text = label
+	btn.tooltip_text = tooltip
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.custom_minimum_size = Vector2(56, 44)
+	btn.add_theme_font_size_override("font_size", 22)
+	return btn
 
 
 func set_summary(text: String, coin_summary: String = "") -> void:
@@ -115,12 +124,13 @@ func _style_tab_button(btn: Button, active: bool) -> void:
 	if active:
 		style.bg_color = Color(0.55, 0.82, 0.98)
 		style.border_color = Color(0.12, 0.45, 0.72)
+		btn.add_theme_color_override("font_color", Color(0.10, 0.16, 0.28))
 	else:
 		style.bg_color = Color(0.92, 0.94, 0.98)
 		style.border_color = Color(0.65, 0.72, 0.82)
+		btn.add_theme_color_override("font_color", Color(0.22, 0.48, 0.82) if btn.text == "$" else Color(0.14, 0.20, 0.30))
 	style.set_border_width_all(2)
 	btn.add_theme_stylebox_override("normal", style)
-	btn.add_theme_color_override("font_color", Color(0.14, 0.20, 0.30))
 
 
 func _rebuild_content() -> void:
@@ -191,8 +201,8 @@ func _build_wardrobe_tab() -> void:
 
 
 func _wardrobe_tile(entry: Variant, slot: String, equipped: bool) -> Control:
-	var wrap := VBoxContainer.new()
-	wrap.add_theme_constant_override("separation", 2)
+	var tile_box := VBoxContainer.new()
+	tile_box.add_theme_constant_override("separation", 2)
 	var btn := Button.new()
 	btn.custom_minimum_size = Vector2(58, 58)
 	var item_name: String = "None" if entry == null else str((entry as Dictionary).get("name", ""))
@@ -225,14 +235,14 @@ func _wardrobe_tile(entry: Variant, slot: String, equipped: bool) -> Control:
 	icon.offset_bottom = -3
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	btn.add_child(icon)
-	wrap.add_child(btn)
+	tile_box.add_child(btn)
 	var lbl := Label.new()
 	lbl.text = item_name
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.add_theme_font_size_override("font_size", 10)
 	lbl.add_theme_color_override("font_color", CLR_TEXT)
-	wrap.add_child(lbl)
-	return wrap
+	tile_box.add_child(lbl)
+	return tile_box
 
 
 func _add_section_header(text: String) -> void:

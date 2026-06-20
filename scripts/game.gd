@@ -35,14 +35,16 @@ const DifficultyConfigScript := preload("res://scripts/difficulty_config.gd")
 const FollowerSnapScript := preload("res://scripts/follower_snap.gd")
 const PupColorsScript := preload("res://scripts/pup_colors.gd")
 const LevelGeneratorScript := preload("res://scripts/level_generator.gd")
+const PlayerInputControllerScript := preload("res://scripts/player_input_controller.gd")
+const TouchControlConfigScript := preload("res://scripts/touch_control_config.gd")
+const SafeButtonScript := preload("res://scripts/safe_button.gd")
+const PAUSE_TOUCH_LABELS := ["Tap", "Joystick", "Both", "Off"]
 const LAYER_PLAYER := 2
 
 var cam: Camera3D
 var builder: MazeBuilder
 var run_seed: int = 0
 var current_level: int = 0
-var last_target: Vector3 = Vector3.ZERO
-var has_last_target := false
 
 var has_key: bool = false
 var key_node: Node3D = null
@@ -101,28 +103,36 @@ var hint_label: Label = null
 var win_panel: Panel = null
 var win_label: Label = null
 var restart_btn: Button = null
-var reload_btn: Button = null
 var menu_btn: Button = null
 var test_toggle: CheckButton = null
 var next_btn: Button = null
 var restart_btn2: Button = null
 var save_progress_btn: Button = null
+var pause_btn: Button = null
+var key_status_label: Label = null
 
-var is_tracking := false
-var active_touch_id := -1
+var player_input: PlayerInputController = null
+var pause_backdrop: ColorRect = null
+var pause_panel: PanelContainer = null
+var win_backdrop: ColorRect = null
+var confirm_dialog: ConfirmationDialog = null
+var _touch_control_buttons: Array[Button] = []
+var _paused: bool = false
+var _pending_confirm: Callable = Callable()
 
 var _save: GameSave
 
 
 func _ready() -> void:
 	_save = get_node("/root/SaveGame") as GameSave
-	set_process_unhandled_input(true)
-	set_process_input(true)
+	set_process_unhandled_input(false)
+	set_process_input(false)
 	run_seed = int(Time.get_unix_time_from_system()) ^ randi()
 	cam = cam_fitter
 	builder = MazeBuilderScript.new()
 	_apply_boot_settings()
 	_build_ui()
+	_setup_player_input()
 	follower_squad = FollowerSquad.new()
 	follower_squad.name = "FollowerSquad"
 	add_child(follower_squad)
@@ -222,9 +232,8 @@ func load_level(level_index: int) -> void:
 		follower_squad.max_followers = _compute_max_followers()
 		follower_squad.set_snap_mode(_save.get_snap_mode())
 
-	has_last_target = false
-	last_target = Vector3.ZERO
 	_hide_win_panel()
+	_hide_pause_menu()
 	_update_level_label()
 
 	if current_level == 0 and not test_mode:
@@ -239,6 +248,7 @@ func load_level(level_index: int) -> void:
 	else:
 		_set_hint("Find the key, open the door, reach the exit.")
 	_update_coins_label()
+	_update_key_status()
 
 
 func _physics_process(delta: float) -> void:
@@ -268,6 +278,9 @@ func _physics_process(delta: float) -> void:
 	if footprint_trail != null and puppy != null:
 		footprint_trail.tick(puppy.global_position, puppy.velocity)
 	_try_reach_exit_near_puppy()
+	if player_input != null:
+		player_input.process_movement(delta)
+	_update_key_status()
 
 
 func _update_level_label() -> void:
@@ -693,58 +706,6 @@ func _apply_checker_floor_material(cols: int, rows: int, tile_size: float) -> vo
 	_apply_grass_floor_material(cols, rows, tile_size)
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventScreenTouch:
-		var e := event as InputEventScreenTouch
-		if e.pressed:
-			is_tracking = true
-			active_touch_id = e.index
-			handle_touch(e.position)
-		elif e.index == active_touch_id:
-			is_tracking = false
-			active_touch_id = -1
-		return
-
-	if event is InputEventScreenDrag:
-		var e := event as InputEventScreenDrag
-		if is_tracking and e.index == active_touch_id:
-			handle_touch(e.position)
-		return
-
-	if event is InputEventMouseButton:
-		var e := event as InputEventMouseButton
-		if e.button_index == MOUSE_BUTTON_LEFT:
-			if e.pressed:
-				is_tracking = true
-				handle_touch(e.position)
-			else:
-				is_tracking = false
-		return
-
-	if event is InputEventMouseMotion:
-		if is_tracking and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-			handle_touch(event.position)
-
-
-func handle_touch(screen_pos: Vector2) -> void:
-	if cam == null or puppy == null:
-		return
-	var from := cam.project_ray_origin(screen_pos)
-	var dir := cam.project_ray_normal(screen_pos)
-	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 500.0)
-	query.collision_mask = floor_collision_mask
-	query.exclude = [puppy.get_rid()]
-	var result := get_world_3d().direct_space_state.intersect_ray(query)
-	if result.is_empty():
-		return
-	var p: Vector3 = result.position
-	if has_last_target and p.distance_to(last_target) < target_update_threshold:
-		return
-	last_target = p
-	has_last_target = true
-	puppy.call("set_target", p)
-
-
 # --- Pickups ---
 
 func _spawn_key_if_present(info: Dictionary) -> void:
@@ -958,6 +919,7 @@ func _collect_key() -> void:
 	if has_key:
 		return
 	has_key = true
+	_update_key_status()
 	SfxManager.play_key()
 	var burst_pos: Vector3 = key_node.global_position if key_node else puppy.global_position
 	_burst_at(burst_pos, Color(1.0, 0.9, 0.2))
@@ -1284,6 +1246,7 @@ func _burst_at(world_pos: Vector3, color: Color) -> void:
 
 func _build_ui() -> void:
 	ui_layer = CanvasLayer.new()
+	ui_layer.layer = 10
 	add_child(ui_layer)
 	ui_root = Control.new()
 	ui_root.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1291,47 +1254,58 @@ func _build_ui() -> void:
 	ui_layer.add_child(ui_root)
 
 	var m := ui_safe_margin
-	var top_bar := HBoxContainer.new()
-	top_bar.position = Vector2(m, m)
-	top_bar.add_theme_constant_override("separation", 10)
-	ui_root.add_child(top_bar)
 
-	menu_btn = _big_button("Menu", _on_menu_pressed)
-	top_bar.add_child(menu_btn)
-	restart_btn = _big_button("Restart", func(): load_level(current_level))
-	top_bar.add_child(restart_btn)
-	reload_btn = _big_button("Reload", func(): load_level(current_level))
-	top_bar.add_child(reload_btn)
-
-	save_progress_btn = _big_button("Save", _on_save_progress_pressed)
-	save_progress_btn.visible = false
-	top_bar.add_child(save_progress_btn)
-
-	test_toggle = CheckButton.new()
-	test_toggle.text = "Test maze"
-	test_toggle.button_pressed = test_mode
-	test_toggle.toggled.connect(_on_test_mode_toggled)
-	top_bar.add_child(test_toggle)
+	var top_left := VBoxContainer.new()
+	top_left.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	top_left.offset_left = m
+	top_left.offset_top = m
+	top_left.offset_right = m + 420
+	top_left.add_theme_constant_override("separation", 4)
+	top_left.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_root.add_child(top_left)
 
 	level_label = Label.new()
-	level_label.position = Vector2(m, m + 52)
-	level_label.size = Vector2(700, 24)
+	level_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	level_label.add_theme_color_override("font_color", Color(1.0, 0.98, 0.92))
 	level_label.add_theme_color_override("font_outline_color", Color(0.12, 0.22, 0.10))
 	level_label.add_theme_constant_override("outline_size", 2)
-	ui_root.add_child(level_label)
+	top_left.add_child(level_label)
+
+	key_status_label = Label.new()
+	key_status_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
+	key_status_label.add_theme_color_override("font_outline_color", Color(0.12, 0.22, 0.10))
+	key_status_label.add_theme_constant_override("outline_size", 2)
+	top_left.add_child(key_status_label)
+
+	hint_label = Label.new()
+	hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint_label.custom_minimum_size = Vector2(380, 0)
+	hint_label.add_theme_color_override("font_color", Color(1.0, 0.98, 0.90))
+	hint_label.add_theme_color_override("font_outline_color", Color(0.12, 0.22, 0.10))
+	hint_label.add_theme_constant_override("outline_size", 2)
+	top_left.add_child(hint_label)
+
+	var top_right := VBoxContainer.new()
+	top_right.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	top_right.offset_top = m
+	top_right.offset_right = -m
+	top_right.offset_left = -240
+	top_right.add_theme_constant_override("separation", 8)
+	top_right.alignment = BoxContainer.ALIGNMENT_END
+	top_right.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_root.add_child(top_right)
 
 	coins_label = Label.new()
-	coins_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	coins_label.offset_top = m + 8
-	coins_label.offset_right = -m
-	coins_label.offset_left = -220
 	coins_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	coins_label.add_theme_font_size_override("font_size", 16)
 	coins_label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.82))
 	coins_label.add_theme_color_override("font_outline_color", Color(0.12, 0.22, 0.10))
 	coins_label.add_theme_constant_override("outline_size", 3)
-	ui_root.add_child(coins_label)
+	top_right.add_child(coins_label)
+
+	pause_btn = _hud_button("Pause", _on_pause_pressed)
+	pause_btn.custom_minimum_size = Vector2(96, 40)
+	top_right.add_child(pause_btn)
 
 	boost_label = Label.new()
 	boost_label.visible = false
@@ -1340,15 +1314,8 @@ func _build_ui() -> void:
 	boost_label.offset_left = -220
 	boost_label.offset_right = 220
 	boost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	boost_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui_root.add_child(boost_label)
-
-	hint_label = Label.new()
-	hint_label.position = Vector2(m, m + 78)
-	hint_label.size = Vector2(900, 28)
-	hint_label.add_theme_color_override("font_color", Color(1.0, 0.98, 0.90))
-	hint_label.add_theme_color_override("font_outline_color", Color(0.12, 0.22, 0.10))
-	hint_label.add_theme_constant_override("outline_size", 2)
-	ui_root.add_child(hint_label)
 
 	var version_label := Label.new()
 	version_label.text = GameVersionScript.version_label()
@@ -1357,10 +1324,24 @@ func _build_ui() -> void:
 	version_label.offset_bottom = -m
 	version_label.add_theme_font_size_override("font_size", 12)
 	version_label.add_theme_color_override("font_color", Color(0.35, 0.38, 0.45, 0.85))
+	version_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui_root.add_child(version_label)
+
+	confirm_dialog = ConfirmationDialog.new()
+	confirm_dialog.title = "Confirm"
+	confirm_dialog.ok_button_text = "Yes"
+	confirm_dialog.cancel_button_text = "No"
+	confirm_dialog.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_MAIN_WINDOW_SCREEN
+	confirm_dialog.canceled.connect(_update_gameplay_input_block)
+	ui_root.add_child(confirm_dialog)
+
+	win_backdrop = _make_modal_backdrop()
+	win_backdrop.visible = false
+	ui_root.add_child(win_backdrop)
 
 	win_panel = Panel.new()
 	win_panel.visible = false
+	win_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	win_panel.set_anchors_preset(Control.PRESET_CENTER)
 	win_panel.clip_contents = true
 	var win_style := StyleBoxFlat.new()
@@ -1402,22 +1383,286 @@ func _build_ui() -> void:
 	shop_panel.purchase_requested.connect(_purchase_shop_item)
 	win_v.add_child(shop_panel)
 
-	var win_btns := HBoxContainer.new()
-	win_btns.add_theme_constant_override("separation", 12)
+	var win_btns := VBoxContainer.new()
+	win_btns.add_theme_constant_override("separation", 10)
 	win_btns.size_flags_vertical = Control.SIZE_SHRINK_END
-	win_btns.alignment = BoxContainer.ALIGNMENT_CENTER
 	win_v.add_child(win_btns)
 
-	next_btn = _win_button("Next Level", _on_next_level_pressed)
+	next_btn = _win_primary_button("Next Level  →", _on_next_level_pressed)
 	win_btns.add_child(next_btn)
-	restart_btn2 = _win_button("Restart", func(): load_level(current_level))
-	win_btns.add_child(restart_btn2)
-	var menu_win_btn := _win_button("Menu", _on_menu_pressed)
-	win_btns.add_child(menu_win_btn)
+
+	var win_secondary_btns := HBoxContainer.new()
+	win_secondary_btns.add_theme_constant_override("separation", 10)
+	win_secondary_btns.alignment = BoxContainer.ALIGNMENT_CENTER
+	win_btns.add_child(win_secondary_btns)
+
+	restart_btn2 = _win_secondary_button("Restart", func(): _confirm_action("Restart this level?", func(): load_level(current_level)))
+	win_secondary_btns.add_child(restart_btn2)
+	var menu_win_btn := _win_secondary_button("Menu", func(): _confirm_action("Return to menu?", _on_menu_pressed))
+	win_secondary_btns.add_child(menu_win_btn)
+
+	pause_backdrop = _make_modal_backdrop()
+	pause_backdrop.visible = false
+	ui_root.add_child(pause_backdrop)
+
+	pause_panel = PanelContainer.new()
+	pause_panel.visible = false
+	pause_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	pause_panel.set_anchors_preset(Control.PRESET_CENTER)
+	var pause_style := win_style.duplicate()
+	pause_style.content_margin_left = 20
+	pause_style.content_margin_right = 20
+	pause_style.content_margin_top = 18
+	pause_style.content_margin_bottom = 18
+	pause_panel.add_theme_stylebox_override("panel", pause_style)
+	ui_root.add_child(pause_panel)
+	_layout_pause_panel()
+
+	var pause_scroll := ScrollContainer.new()
+	pause_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pause_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pause_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	pause_panel.add_child(pause_scroll)
+
+	var pause_v := VBoxContainer.new()
+	pause_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pause_v.add_theme_constant_override("separation", 10)
+	pause_scroll.add_child(pause_v)
+
+	var pause_title := Label.new()
+	pause_title.text = "Paused"
+	pause_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pause_title.add_theme_font_size_override("font_size", 22)
+	pause_title.add_theme_color_override("font_color", Color(0.12, 0.18, 0.28))
+	pause_v.add_child(pause_title)
+
+	pause_v.add_child(_pause_menu_button("Resume", _hide_pause_menu))
+
+	restart_btn = _pause_menu_button("Restart Level", func():
+		_confirm_action("Restart this level?", func():
+			_hide_pause_menu()
+			load_level(current_level)
+		)
+	)
+	pause_v.add_child(restart_btn)
+
+	menu_btn = _pause_menu_button("Return to Menu", func():
+		_confirm_action("Return to menu? Unsaved progress this level may be lost.", _on_menu_pressed)
+	)
+	pause_v.add_child(menu_btn)
+
+	save_progress_btn = _pause_menu_button("Save Progress", _on_save_progress_pressed)
+	save_progress_btn.visible = false
+	pause_v.add_child(save_progress_btn)
+
+	test_toggle = CheckButton.new()
+	test_toggle.text = "Test maze mode"
+	test_toggle.button_pressed = test_mode
+	test_toggle.focus_mode = Control.FOCUS_NONE
+	test_toggle.add_theme_color_override("font_color", Color(0.12, 0.18, 0.28))
+	test_toggle.add_theme_font_size_override("font_size", 14)
+	test_toggle.toggled.connect(_on_test_mode_toggled)
+	pause_v.add_child(test_toggle)
+
+	var touch_label := Label.new()
+	touch_label.text = "Touch controls"
+	touch_label.add_theme_color_override("font_color", Color(0.12, 0.18, 0.28))
+	touch_label.add_theme_font_size_override("font_size", 14)
+	pause_v.add_child(touch_label)
+
+	var touch_row := FlowContainer.new()
+	touch_row.add_theme_constant_override("h_separation", 6)
+	touch_row.add_theme_constant_override("v_separation", 6)
+	touch_row.alignment = FlowContainer.ALIGNMENT_CENTER
+	pause_v.add_child(touch_row)
+	_touch_control_buttons.clear()
+	for mode in range(TouchControlConfigScript.MODE_LABELS.size()):
+		var label: String = PAUSE_TOUCH_LABELS[mode] if mode < PAUSE_TOUCH_LABELS.size() else TouchControlConfigScript.MODE_LABELS[mode]
+		var btn: Button = SafeButtonScript.new()
+		btn.text = label
+		btn.custom_minimum_size = Vector2(72, 36)
+		btn.action_mode = BaseButton.ACTION_MODE_BUTTON_RELEASE
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.add_theme_font_size_override("font_size", 13)
+		btn.set_meta("touch_mode", mode)
+		btn.pressed.connect(_select_touch_control_mode.bind(mode))
+		touch_row.add_child(btn)
+		_touch_control_buttons.append(btn)
+	_sync_touch_control_buttons(_save.get_touch_control_mode())
+
+
+func _make_modal_backdrop() -> ColorRect:
+	var backdrop := ColorRect.new()
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	backdrop.color = Color(0.05, 0.08, 0.12, 0.55)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	return backdrop
+
+
+func _setup_player_input() -> void:
+	player_input = PlayerInputControllerScript.new()
+	player_input.name = "PlayerInputController"
+	player_input.debug_enabled = debug_enabled
+	add_child(player_input)
+	player_input.setup(
+		cam,
+		puppy,
+		self,
+		floor_collision_mask,
+		target_update_threshold,
+		ui_root,
+		ui_layer
+	)
+	player_input.set_touch_control_mode(_save.get_touch_control_mode())
+	_update_gameplay_input_block()
+
+
+func _select_touch_control_mode(mode: int) -> void:
+	_save.set_touch_control_mode(mode)
+	_save.save_game()
+	_sync_touch_control_buttons(mode)
+	if player_input != null:
+		player_input.set_touch_control_mode(mode)
+
+
+func _sync_touch_control_buttons(mode: int) -> void:
+	mode = TouchControlConfigScript.clamp_mode(mode)
+	for btn in _touch_control_buttons:
+		if btn == null:
+			continue
+		var m: int = int(btn.get_meta("touch_mode", -1))
+		var style := StyleBoxFlat.new()
+		style.set_corner_radius_all(8)
+		style.set_border_width_all(2)
+		if m == mode:
+			style.bg_color = Color(0.22, 0.48, 0.82)
+			btn.add_theme_color_override("font_color", Color.WHITE)
+		else:
+			style.bg_color = Color(0.90, 0.93, 0.98)
+			style.border_color = Color(0.62, 0.70, 0.82)
+			btn.add_theme_color_override("font_color", Color(0.12, 0.18, 0.28))
+		btn.add_theme_stylebox_override("normal", style)
+
+
+func _update_key_status() -> void:
+	if key_status_label == null:
+		return
+	if current_level == 0 and not test_mode:
+		key_status_label.text = "Key: not needed"
+	elif has_key:
+		key_status_label.text = "Key: collected"
+	else:
+		key_status_label.text = "Key: not found"
+
+
+func _update_gameplay_input_block() -> void:
+	var blocked: bool = _paused \
+		or (win_panel != null and win_panel.visible) \
+		or (confirm_dialog != null and confirm_dialog.visible)
+	if player_input != null:
+		player_input.set_gameplay_blocked(blocked)
+
+
+func _show_pause_menu() -> void:
+	if _paused or level_won:
+		return
+	_paused = true
+	if pause_backdrop:
+		pause_backdrop.visible = true
+	if pause_panel:
+		pause_panel.visible = true
+	_layout_pause_panel()
+	get_tree().paused = true
+	ui_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	_update_gameplay_input_block()
+
+
+func _hide_pause_menu() -> void:
+	if not _paused:
+		return
+	_paused = false
+	if pause_backdrop:
+		pause_backdrop.visible = false
+	if pause_panel:
+		pause_panel.visible = false
+	get_tree().paused = false
+	ui_layer.process_mode = Node.PROCESS_MODE_INHERIT
+	_update_gameplay_input_block()
+
+
+func _on_pause_pressed() -> void:
+	if _paused:
+		_hide_pause_menu()
+	else:
+		_show_pause_menu()
+
+
+func _confirm_action(message: String, callback: Callable) -> void:
+	if confirm_dialog == null:
+		callback.call()
+		return
+	if confirm_dialog.visible:
+		return
+	_pending_confirm = callback
+	confirm_dialog.dialog_text = message
+	if not confirm_dialog.confirmed.is_connected(_on_confirm_dialog_accepted):
+		confirm_dialog.confirmed.connect(_on_confirm_dialog_accepted)
+	confirm_dialog.popup_centered()
+	_update_gameplay_input_block()
+
+
+func _on_confirm_dialog_accepted() -> void:
+	if _pending_confirm.is_valid():
+		_pending_confirm.call()
+	_pending_confirm = Callable()
+	_update_gameplay_input_block()
+
+
+func _hud_button(text: String, callback: Callable) -> Button:
+	var b: Button = SafeButtonScript.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(120, 44)
+	b.action_mode = BaseButton.ACTION_MODE_BUTTON_RELEASE
+	b.focus_mode = Control.FOCUS_NONE
+	b.pressed.connect(callback)
+	return b
+
+
+func _pause_menu_button(text: String, callback: Callable) -> Button:
+	var b := _win_button(text, callback)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.custom_minimum_size = Vector2(0, 46)
+	b.add_theme_font_size_override("font_size", 16)
+	return b
+
+
+func _layout_pause_panel() -> void:
+	if pause_panel == null:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	var w := clampf(vp.x - 56.0, 300.0, 400.0)
+	var h := clampf(vp.y - 64.0, 360.0, 520.0)
+	pause_panel.offset_left = -w * 0.5
+	pause_panel.offset_right = w * 0.5
+	pause_panel.offset_top = -h * 0.5
+	pause_panel.offset_bottom = h * 0.5
+	call_deferred("_sync_pause_content_width")
+
+
+func _sync_pause_content_width() -> void:
+	if pause_panel == null or pause_panel.get_child_count() == 0:
+		return
+	var scroll := pause_panel.get_child(0) as ScrollContainer
+	if scroll == null or scroll.get_child_count() == 0:
+		return
+	var content := scroll.get_child(0) as Control
+	if content == null:
+		return
+	content.custom_minimum_size.x = maxf(scroll.size.x - 4.0, 260.0)
 
 
 func _win_button(text: String, callback: Callable) -> Button:
-	var b := _big_button(text, callback)
+	var b := _hud_button(text, callback)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.22, 0.48, 0.82)
 	style.set_corner_radius_all(10)
@@ -1426,12 +1671,48 @@ func _win_button(text: String, callback: Callable) -> Button:
 	return b
 
 
-func _big_button(text: String, callback: Callable) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.custom_minimum_size = Vector2(120, 44)
-	b.pressed.connect(callback)
+func _win_primary_button(text: String, callback: Callable) -> Button:
+	var b := _hud_button(text, callback)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.custom_minimum_size = Vector2(0, 56)
+	b.add_theme_font_size_override("font_size", 20)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.18, 0.62, 0.34)
+	style.set_corner_radius_all(12)
+	style.set_border_width_all(0)
+	style.content_margin_top = 6
+	style.content_margin_bottom = 6
+	b.add_theme_stylebox_override("normal", style)
+	var hover := style.duplicate()
+	hover.bg_color = Color(0.22, 0.70, 0.40)
+	b.add_theme_stylebox_override("hover", hover)
+	var pressed := style.duplicate()
+	pressed.bg_color = Color(0.14, 0.52, 0.28)
+	b.add_theme_stylebox_override("pressed", pressed)
+	b.add_theme_color_override("font_color", Color.WHITE)
+	b.add_theme_color_override("font_hover_color", Color.WHITE)
+	b.add_theme_color_override("font_pressed_color", Color.WHITE)
 	return b
+
+
+func _win_secondary_button(text: String, callback: Callable) -> Button:
+	var b := _hud_button(text, callback)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.custom_minimum_size = Vector2(0, 42)
+	b.add_theme_font_size_override("font_size", 15)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.90, 0.93, 0.98)
+	style.border_color = Color(0.62, 0.70, 0.82)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(10)
+	b.add_theme_stylebox_override("normal", style)
+	b.add_theme_color_override("font_color", Color(0.14, 0.20, 0.30))
+	b.add_theme_color_override("font_hover_color", Color(0.14, 0.20, 0.30))
+	return b
+
+
+func _big_button(text: String, callback: Callable) -> Button:
+	return _hud_button(text, callback)
 
 
 func _layout_win_panel() -> void:
@@ -1449,6 +1730,7 @@ func _layout_win_panel() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_SIZE_CHANGED:
 		_layout_win_panel()
+		_layout_pause_panel()
 
 
 func _on_test_mode_toggled(on: bool) -> void:
@@ -1457,6 +1739,7 @@ func _on_test_mode_toggled(on: bool) -> void:
 
 
 func _on_menu_pressed() -> void:
+	_hide_pause_menu()
 	_save.current_level = current_level
 	_save.total_rescued += rescued_this_level
 	if _save.progress_features_unlocked():
@@ -1491,8 +1774,12 @@ func _on_next_level_pressed() -> void:
 
 func _show_win_panel() -> void:
 	_layout_win_panel()
+	_hide_pause_menu()
+	if win_backdrop:
+		win_backdrop.visible = true
 	if win_panel:
 		win_panel.visible = true
+	_update_gameplay_input_block()
 	if win_label:
 		var rescue_line := ""
 		if rescued_this_level > 0:
@@ -1508,8 +1795,11 @@ func _show_win_panel() -> void:
 
 
 func _hide_win_panel() -> void:
+	if win_backdrop:
+		win_backdrop.visible = false
 	if win_panel:
 		win_panel.visible = false
+	_update_gameplay_input_block()
 
 
 func _set_hint(msg: String) -> void:
