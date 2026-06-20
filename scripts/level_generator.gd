@@ -38,6 +38,11 @@ var _tile_h: int = 0
 var _rng_seed: int = 1234544
 var _difficulty_mode: int = _DifficultyConfig.MODE_MASTER
 
+var _rescue_room_active: bool = false
+var _rescue_room_min: Vector2i = Vector2i.ZERO
+var _rescue_room_max: Vector2i = Vector2i.ZERO
+var _rescue_room_door: Vector2i = Vector2i(-1, -1)
+
 
 func set_seed(seed_value: int) -> void:
 	_rng_seed = seed_value if seed_value != 0 else 1
@@ -51,6 +56,8 @@ func generate_level(
 	difficulty_mode: int = _DifficultyConfig.MODE_MASTER
 ) -> PackedStringArray:
 	_difficulty_mode = _DifficultyConfig.clamp_mode(difficulty_mode)
+	_rescue_room_active = false
+	_rescue_room_door = Vector2i(-1, -1)
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	rng.seed = _rng_seed + level_index * 1336
 
@@ -139,6 +146,8 @@ func generate_level(
 	_place_coin_pickups(rng, level_index, far1)
 	_place_accessory_pickups(rng, level_index, far1)
 	_place_ultra_pickups(rng, level_index, far1)
+
+	sealRescueRoom()
 
 	# Convert to PackedStringArray
 	var out := PackedStringArray()
@@ -334,7 +343,7 @@ func _place_side_rescue_pen(path: Array[Vector2i], start: Vector2i, goal: Vector
 		if along == Vector2i.ZERO:
 			continue
 		for side_dir: Vector2i in _perp_dirs(along):
-			if _try_carve_side_alcove(junction, side_dir):
+			if _try_create_side_rescue_room(junction, side_dir):
 				return idx
 	return -1
 
@@ -347,7 +356,7 @@ func _force_side_rescue_pen(path: Array[Vector2i], start: Vector2i, goal: Vector
 		if _get_tile(junction.x, junction.y) != ".".unicode_at(0):
 			continue
 		for side_dir: Vector2i in DIRS:
-			if _try_carve_side_alcove(junction, side_dir):
+			if _try_create_side_rescue_room(junction, side_dir):
 				return true
 	return false
 
@@ -375,46 +384,196 @@ func _place_key_before_pen(path: Array[Vector2i], junction_idx: int, rng: Random
 		_set_tile(key_pos.x, key_pos.y, "K")
 
 
-func _try_carve_side_alcove(junction: Vector2i, side_dir: Vector2i) -> bool:
-	if _get_tile(junction.x, junction.y) != ".".unicode_at(0):
-		return false
-	var gate: Vector2i = junction + side_dir
-	if gate.x < 1 or gate.x >= _tile_w - 1 or gate.y < 1 or gate.y >= _tile_h - 1:
-		return false
-	if _get_tile(gate.x, gate.y) != "#".unicode_at(0):
-		return false
+func _try_create_side_rescue_room(junction: Vector2i, side_dir: Vector2i) -> bool:
 	var perp_dirs: Array[Vector2i] = _perp_dirs(side_dir)
 	for perp: Vector2i in perp_dirs:
-		if _try_carve_alcove_shape(junction, side_dir, perp, 2, 2):
-			return true
-		if _try_carve_alcove_shape(junction, side_dir, perp, 3, 2):
-			return true
-		if _try_carve_alcove_shape(junction, side_dir, perp, 2, 1):
-			return true
+		for width: int in [1, 2, 3]:
+			for depth: int in [2, 3]:
+				if createRescueRoom(junction, side_dir, perp, width, depth):
+					return true
 	return false
 
 
-func _try_carve_alcove_shape(
+func createRescueRoom(
 	junction: Vector2i,
 	side_dir: Vector2i,
 	perp: Vector2i,
-	depth: int,
-	width: int
+	interior_width: int,
+	interior_depth: int
 ) -> bool:
-	var gate: Vector2i = junction + side_dir
-	var pen_cells: Array[Vector2i] = []
-	for d in range(2, depth + 1):
-		for w in range(width):
-			var p: Vector2i = junction + side_dir * d + perp * w
-			if p.x < 1 or p.x >= _tile_w - 1 or p.y < 1 or p.y >= _tile_h - 1:
+	if side_dir == Vector2i.ZERO or perp == Vector2i.ZERO or interior_width < 1 or interior_depth < 1:
+		return false
+	if _get_tile(junction.x, junction.y) != ".".unicode_at(0):
+		return false
+
+	var door: Vector2i = junction + side_dir
+	if not _cell_in_bounds(door):
+		return false
+
+	var interior: Array[Vector2i] = []
+	for d in range(1, interior_depth + 1):
+		for w in range(interior_width):
+			var offset: int = w - (interior_width - 1) / 2
+			var cell: Vector2i = door + side_dir * d + perp * offset
+			if not _cell_in_bounds(cell):
 				return false
-			if _get_tile(p.x, p.y) != "#".unicode_at(0):
-				return false
-			pen_cells.append(p)
-	_set_tile(gate.x, gate.y, "G")
-	for cell: Vector2i in pen_cells:
-		_set_tile(cell.x, cell.y, "P")
+			interior.append(cell)
+
+	if interior.is_empty():
+		return false
+
+	var ix0: int = interior[0].x
+	var ix1: int = interior[0].x
+	var iy0: int = interior[0].y
+	var iy1: int = interior[0].y
+	for cell: Vector2i in interior:
+		ix0 = mini(ix0, cell.x)
+		ix1 = maxi(ix1, cell.x)
+		iy0 = mini(iy0, cell.y)
+		iy1 = maxi(iy1, cell.y)
+
+	var room_min := Vector2i(ix0 - 1, iy0 - 1)
+	var room_max := Vector2i(ix1 + 1, iy1 + 1)
+	if side_dir.x > 0:
+		room_min.x = door.x
+		room_max.x = door.x + interior_depth + 1
+	elif side_dir.x < 0:
+		room_min.x = door.x - interior_depth - 1
+		room_max.x = door.x
+	if side_dir.y > 0:
+		room_min.y = door.y
+		room_max.y = door.y + interior_depth + 1
+	elif side_dir.y < 0:
+		room_min.y = door.y - interior_depth - 1
+		room_max.y = door.y
+
+	if not _cell_in_bounds(room_min) or not _cell_in_bounds(room_max):
+		return false
+
+	for cell: Vector2i in interior:
+		if _get_tile(cell.x, cell.y) != "#".unicode_at(0):
+			return false
+	if _get_tile(door.x, door.y) != "#".unicode_at(0):
+		return false
+
+	var snapshot: Array[String] = _rows.duplicate()
+	_rescue_room_active = true
+	_rescue_room_min = room_min
+	_rescue_room_max = room_max
+	_rescue_room_door = door
+	sealRescueRoom()
+	if not _main_route_still_open():
+		_rows = snapshot
+		_rescue_room_active = false
+		_rescue_room_door = Vector2i(-1, -1)
+		return false
 	return true
+
+
+func _main_route_still_open() -> bool:
+	var start: Vector2i = _find_tile("S")
+	var goal: Vector2i = _find_tile("E")
+	if start.x < 0 or goal.x < 0:
+		return false
+	return not _bfs_path(start, goal).is_empty()
+
+
+func _find_tile(ch: String) -> Vector2i:
+	for y in range(_tile_h):
+		for x in range(_tile_w):
+			if _get_tile(x, y) == ch.unicode_at(0):
+				return Vector2i(x, y)
+	return Vector2i(-1, -1)
+
+
+func sealRescueRoom() -> void:
+	if not _rescue_room_active:
+		return
+	for y in range(_rescue_room_min.y, _rescue_room_max.y + 1):
+		for x in range(_rescue_room_min.x, _rescue_room_max.x + 1):
+			if isInsideRescueRoom(x, y):
+				_set_tile(x, y, "P")
+			elif isRescueRoomBorder(x, y):
+				if x == _rescue_room_door.x and y == _rescue_room_door.y:
+					if _get_tile(x, y) != ".".unicode_at(0):
+						_set_tile(x, y, "G")
+				else:
+					_set_tile(x, y, "#")
+
+
+func openRescueRoomDoor() -> void:
+	if not _rescue_room_active or _rescue_room_door.x < 0:
+		return
+	_set_tile(_rescue_room_door.x, _rescue_room_door.y, ".")
+
+
+static func open_rescue_room_door(lines: PackedStringArray, door: Vector2i) -> PackedStringArray:
+	if door.x < 0 or door.y < 0:
+		return lines
+	if door.y >= lines.size():
+		return lines
+	var row: String = lines[door.y]
+	if door.x >= row.length():
+		return lines
+	var cp: int = row.unicode_at(door.x)
+	if cp != "G".unicode_at(0) and cp != "#".unicode_at(0):
+		return lines
+	var updated: PackedStringArray = lines.duplicate()
+	var bytes: PackedByteArray = updated[door.y].to_utf8_buffer()
+	bytes[door.x] = ".".unicode_at(0)
+	updated[door.y] = bytes.get_string_from_utf8()
+	return updated
+
+
+func isInsideRescueRoom(x: int, y: int) -> bool:
+	if not _rescue_room_active:
+		return false
+	return _is_rescue_interior_cell(x, y, _rescue_room_min, _rescue_room_max, _rescue_room_door)
+
+
+func _is_rescue_interior_cell(
+	x: int,
+	y: int,
+	room_min: Vector2i,
+	room_max: Vector2i,
+	door: Vector2i
+) -> bool:
+	if x < room_min.x or x > room_max.x or y < room_min.y or y > room_max.y:
+		return false
+	if x == door.x and y == door.y:
+		return false
+	if _is_rescue_border_cell(x, y, room_min, room_max, door):
+		return false
+	return true
+
+
+func isRescueRoomBorder(x: int, y: int) -> bool:
+	if not _rescue_room_active:
+		return false
+	return _is_rescue_border_cell(x, y, _rescue_room_min, _rescue_room_max, _rescue_room_door)
+
+
+func _is_rescue_border_cell(
+	x: int,
+	y: int,
+	room_min: Vector2i,
+	room_max: Vector2i,
+	door: Vector2i
+) -> bool:
+	if x == door.x and y == door.y:
+		return true
+	if x < room_min.x or x > room_max.x or y < room_min.y or y > room_max.y:
+		return false
+	return (
+		x == room_min.x
+		or x == room_max.x
+		or y == room_min.y
+		or y == room_max.y
+	)
+
+
+func _cell_in_bounds(cell: Vector2i) -> bool:
+	return cell.x >= 1 and cell.x < _tile_w - 1 and cell.y >= 1 and cell.y < _tile_h - 1
 
 
 func _perp_dirs(along: Vector2i) -> Array[Vector2i]:
@@ -435,7 +594,10 @@ func _get_tile(x: int, y: int) -> int:
 	return int(b[x])
 
 func _tile_is_walkable(x: int, y: int) -> bool:
-	return _get_tile(x, y) != "#".unicode_at(0)
+	var cp: int = _get_tile(x, y)
+	if cp == "#".unicode_at(0) or cp == "G".unicode_at(0) or cp == "P".unicode_at(0):
+		return false
+	return true
 
 func _tile_is_floor(x: int, y: int) -> bool:
 	return _get_tile(x, y) == ".".unicode_at(0)

@@ -34,6 +34,7 @@ const GameVersionScript := preload("res://scripts/game_version.gd")
 const DifficultyConfigScript := preload("res://scripts/difficulty_config.gd")
 const FollowerSnapScript := preload("res://scripts/follower_snap.gd")
 const PupColorsScript := preload("res://scripts/pup_colors.gd")
+const LevelGeneratorScript := preload("res://scripts/level_generator.gd")
 const LAYER_PLAYER := 2
 
 var cam: Camera3D
@@ -56,6 +57,7 @@ var door_opened: bool = false
 var has_pen: bool = false
 var pen_gate_body: StaticBody3D = null
 var pen_gate_center: Vector3 = Vector3.ZERO
+var pen_gate_cell: Vector2i = Vector2i(-1, -1)
 var pen_gate_area: Area3D = null
 var pen_opened: bool = false
 var pen_center: Vector3 = Vector3.ZERO
@@ -1111,11 +1113,17 @@ func _configure_maze_nav(info: Dictionary, ts: float) -> void:
 		for p: Variant in info.get("pen_cells", []):
 			if p is Vector3:
 				pen_tiles.append(Vector2i(int(round((p as Vector3).x / ts)), int(round((p as Vector3).z / ts))))
-		var gate := Vector2i(-1, -1)
-		if info.get("pen_gate") is Vector3:
-			var g: Vector3 = info.pen_gate as Vector3
-			gate = Vector2i(int(round(g.x / ts)), int(round(g.z / ts)))
-		nav.configure_sealed_pen(pen_tiles, gate, not pen_opened)
+		if info.get("pen_gate_cell") is Vector2i:
+			pen_gate_cell = info.pen_gate_cell as Vector2i
+		else:
+			pen_gate_cell = Vector2i(-1, -1)
+			if info.get("pen_gate") is Vector3:
+				var g: Vector3 = info.pen_gate as Vector3
+				pen_gate_cell = Vector2i(int(round(g.x / ts)), int(round(g.z / ts)))
+		if pen_gate_cell.x >= 0:
+			pen_gate_center = nav.tile_center(pen_gate_cell.x, pen_gate_cell.y, 0.0)
+		nav.configure_rescue_door(pen_gate_cell, pen_opened)
+		nav.configure_sealed_pen(pen_tiles, pen_gate_cell, not pen_opened)
 	_refresh_dynamic_blockers()
 
 
@@ -1554,6 +1562,7 @@ func _clear_runtime_pickups() -> void:
 	pen_gate_body = null
 	pen_gate_area = null
 	pen_gate_center = Vector3.ZERO
+	pen_gate_cell = Vector2i(-1, -1)
 	pen_opened = false
 	has_pen = false
 	_refresh_dynamic_blockers()
@@ -1577,7 +1586,22 @@ func _spawn_pen_gate_if_present(info: Dictionary) -> void:
 	pen_gate_body = info.get("pen_gate_body") as StaticBody3D
 	if pen_gate_body == null:
 		return
-	pen_gate_center = pen_gate_body.global_position
+	if info.get("pen_gate_cell") is Vector2i:
+		pen_gate_cell = info.pen_gate_cell as Vector2i
+	elif info.pen_gate is Vector3:
+		var g: Vector3 = info.pen_gate as Vector3
+		pen_gate_cell = Vector2i(
+			int(round(g.x / builder.tile_size)),
+			int(round(g.z / builder.tile_size))
+		)
+	if pen_gate_cell.x >= 0:
+		pen_gate_center = Vector3(
+			float(pen_gate_cell.x) * builder.tile_size,
+			0.0,
+			float(pen_gate_cell.y) * builder.tile_size
+		)
+	else:
+		pen_gate_center = pen_gate_body.global_position
 	_refresh_dynamic_blockers()
 	pen_gate_area = Area3D.new()
 	pen_gate_area.collision_mask = LAYER_PLAYER
@@ -1620,21 +1644,24 @@ func _open_pen() -> void:
 			var pos: Vector3 = waiting_pup.global_position
 			pos.y = _follower_floor_y()
 			spawn_positions.append(pos)
-	pen_opened = true
-	if puppy != null and puppy.has_method("get_nav"):
-		var nav: MazeNav = puppy.get_nav()
-		if nav != null:
-			nav.set_pen_open(true)
-	_clear_waiting_pups_in_room()
-	SfxManager.play_door()
-	_burst_at(pen_gate_center, Color(1.0, 0.6, 0.85))
 	if is_instance_valid(pen_gate_body):
 		pen_gate_body.queue_free()
 	pen_gate_body = null
 	if pen_gate_area and is_instance_valid(pen_gate_area):
 		pen_gate_area.queue_free()
 	pen_gate_area = null
+	pen_opened = true
+	if puppy != null and puppy.has_method("get_nav"):
+		var nav: MazeNav = puppy.get_nav()
+		if nav != null:
+			if pen_gate_cell.x >= 0:
+				nav.lines = LevelGeneratorScript.open_rescue_room_door(nav.lines, pen_gate_cell)
+			nav.set_pen_open(true)
+			nav.set_rescue_door_unlocked(true)
 	_refresh_dynamic_blockers()
+	_clear_waiting_pups_in_room()
+	SfxManager.play_door()
+	_burst_at(pen_gate_center, Color(1.0, 0.6, 0.85))
 	var nav: MazeNav = puppy.get_nav() if puppy.has_method("get_nav") else null
 	var release_count: int = _compute_pen_release_count()
 	if nav != null and follower_squad != null and release_count > 0:

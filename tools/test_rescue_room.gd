@@ -5,7 +5,7 @@ func _initialize() -> void:
 		var ok := false
 		for seed in range(50):
 			var lines := LevelData.make(level, 1000 + seed, false, 0)
-			if LevelData._has_rescue_room(lines):
+			if LevelData._has_rescue_room(lines) and LevelData._validate_rescue_room_sealed(lines):
 				ok = true
 				break
 		if ok:

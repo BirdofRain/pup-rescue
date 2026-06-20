@@ -125,11 +125,13 @@ func build_from_lines(lines: PackedStringArray, maze_root: Node3D, level_index: 
 		)
 
 	if info.pen_gate != null:
-		info["pen_gate_body"] = _add_door_block(
-			lines, cols, rows, walls,
-			Vector2i(int(info.pen_gate.x / tile_size), int(info.pen_gate.z / tile_size)),
-			Color(0.82, 0.22, 0.28),
-			"RescueGate"
+		var gate_cell := Vector2i(
+			int(round(info.pen_gate.x / tile_size)),
+			int(round(info.pen_gate.z / tile_size))
+		)
+		info["pen_gate_cell"] = gate_cell
+		info["pen_gate_body"] = _add_rescue_gate_block(
+			lines, cols, rows, walls, gate_cell, Color(0.82, 0.22, 0.28)
 		)
 
 	return info
@@ -238,119 +240,66 @@ func _build_rescue_room(
 		plane.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 		room_root.add_child(plane)
 
-	if info.pen_cells.size() > 0:
-		_add_rescue_room_walls(room_root, info.pen_cells, lines, cols, rows, info)
 
-
-func _add_rescue_room_walls(
-	parent: Node3D,
-	pen_cells: Array,
+func _add_rescue_gate_block(
 	lines: PackedStringArray,
 	cols: int,
 	rows: int,
-	info: Dictionary
-) -> void:
-	var cell_set: Dictionary = {}
-	var min_x: int = 9999
-	var max_x: int = -9999
-	var min_z: int = 9999
-	var max_z: int = -9999
-	for p: Vector3 in pen_cells:
-		var tx: int = int(round(p.x / tile_size))
-		var tz: int = int(round(p.z / tile_size))
-		cell_set["%d,%d" % [tx, tz]] = true
-		min_x = mini(min_x, tx)
-		max_x = maxi(max_x, tx)
-		min_z = mini(min_z, tz)
-		max_z = maxi(max_z, tz)
-
-	var gate_tx: int = -1
-	var gate_tz: int = -1
-	if info.pen_gate is Vector3:
-		gate_tx = int(round((info.pen_gate as Vector3).x / tile_size))
-		gate_tz = int(round((info.pen_gate as Vector3).z / tile_size))
-
-	var blockers: Array = info.get("pen_wall_blockers", [])
-
-	var wall_mat := StandardMaterial3D.new()
-	wall_mat.albedo_color = Color(0.52, 0.32, 0.68)
-	wall_mat.roughness = 0.9
+	parent: Node3D,
+	gate_cell: Vector2i,
+	tint: Color = Color(0.82, 0.22, 0.28)
+) -> StaticBody3D:
+	var x: int = gate_cell.x
+	var z: int = gate_cell.y
 	var t: float = tile_size * wall_thickness_ratio
-	var h: float = wall_height * 0.55
-	var y: float = h * 0.5
+	var door_h: float = wall_height * door_height_multiplier
+	var door_t: float = t * door_thickness_multiplier
+	var y_center: float = door_h * 0.5
+	var open_w: float = max(0.05, tile_size - t * 2.0)
 
-	for tx in range(min_x, max_x + 1):
-		for tz in range(min_z, max_z + 1):
-			if not cell_set.has("%d,%d" % [tx, tz]):
-				continue
-			var base := Vector3(float(tx) * tile_size, y, float(tz) * tile_size)
-			if _needs_rescue_wall(lines, tx - 1, tz, cols, rows, cell_set, gate_tx, gate_tz):
-				_add_rescue_wall_segment(
-					parent, base + Vector3(-tile_size * 0.5, 0.0, 0.0),
-					Vector3(t, h, tile_size), wall_mat, blockers
-				)
-			if _needs_rescue_wall(lines, tx + 1, tz, cols, rows, cell_set, gate_tx, gate_tz):
-				_add_rescue_wall_segment(
-					parent, base + Vector3(tile_size * 0.5, 0.0, 0.0),
-					Vector3(t, h, tile_size), wall_mat, blockers
-				)
-			if _needs_rescue_wall(lines, tx, tz - 1, cols, rows, cell_set, gate_tx, gate_tz):
-				_add_rescue_wall_segment(
-					parent, base + Vector3(0.0, 0.0, -tile_size * 0.5),
-					Vector3(tile_size, h, t), wall_mat, blockers
-				)
-			if _needs_rescue_wall(lines, tx, tz + 1, cols, rows, cell_set, gate_tx, gate_tz):
-				_add_rescue_wall_segment(
-					parent, base + Vector3(0.0, 0.0, tile_size * 0.5),
-					Vector3(tile_size, h, t), wall_mat, blockers
-				)
+	var l_walk: bool = _is_walkable(lines, x - 1, z, cols, rows)
+	var r_walk: bool = _is_walkable(lines, x + 1, z, cols, rows)
+	var u_walk: bool = _is_walkable(lines, x, z - 1, cols, rows)
+	var d_walk: bool = _is_walkable(lines, x, z + 1, cols, rows)
 
+	# Horizontal passage (enter east/west) -> vertical gate bar; vertical passage -> horizontal bar.
+	var horizontal_passage: bool = l_walk or r_walk
+	var center := Vector3(float(x) * tile_size, y_center, float(z) * tile_size)
+	var size: Vector3
+	if horizontal_passage:
+		size = Vector3(door_t, door_h, open_w)
+		print("RescueGate orientation cell=(%d,%d) passage=horizontal visual=vertical" % [x, z])
+	else:
+		size = Vector3(open_w, door_h, door_t)
+		print("RescueGate orientation cell=(%d,%d) passage=vertical visual=horizontal" % [x, z])
 
-func _needs_rescue_wall(
-	lines: PackedStringArray,
-	nx: int,
-	nz: int,
-	cols: int,
-	rows: int,
-	cell_set: Dictionary,
-	gate_tx: int,
-	gate_tz: int
-) -> bool:
-	if nx == gate_tx and nz == gate_tz:
-		return false
-	if cell_set.has("%d,%d" % [nx, nz]):
-		return false
-	return true
-
-
-func _add_rescue_wall_segment(
-	parent: Node3D,
-	center: Vector3,
-	size: Vector3,
-	mat: StandardMaterial3D,
-	blockers: Array = []
-) -> void:
 	var body := StaticBody3D.new()
-	body.name = "RescueWall"
+	body.name = "RescueGate"
 	body.collision_layer = 1
 	body.collision_mask = 0
 	body.position = center
 	parent.add_child(body)
 
-	var vis := MeshInstance3D.new()
+	var mesh := MeshInstance3D.new()
 	var box := BoxMesh.new()
 	box.size = size
-	vis.mesh = box
-	vis.material_override = mat
-	body.add_child(vis)
+	mesh.mesh = box
+	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	body.add_child(mesh)
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = tint
+	mat.metallic = 0.0
+	mat.roughness = 0.9
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	mesh.material_override = mat
 
 	var col := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = size
 	col.shape = shape
 	body.add_child(col)
-
-	blockers.append(center)
+	return body
 
 
 func _add_door_block(

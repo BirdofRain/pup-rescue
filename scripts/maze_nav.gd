@@ -2,6 +2,7 @@ class_name MazeNav
 extends RefCounted
 
 const CP_WALL: int = 35  # '#'
+const CP_G: int = 71     # 'G'
 
 var lines: PackedStringArray = PackedStringArray()
 var tile_size: float = 1.0
@@ -12,6 +13,9 @@ var static_blockers: Array[Vector3] = []
 var dynamic_blockers: Array[Vector3] = []
 var _pen_sealed: bool = false
 var _sealed_cells: Dictionary = {}
+var rescue_door_cell: Vector2i = Vector2i(-1, -1)
+var rescue_door_unlocked: bool = false
+var debug_rescue_door: bool = true
 
 
 func _init(
@@ -54,30 +58,51 @@ func configure_sealed_pen(pen_cell_coords: Array, gate_cell: Vector2i, sealed: b
 	for cell in pen_cell_coords:
 		if cell is Vector2i:
 			_sealed_cells["%d,%d" % [cell.x, cell.y]] = true
-	if gate_cell.x >= 0 and gate_cell.y >= 0:
+	if gate_cell.x >= 0 and gate_cell.y >= 0 and sealed:
 		_sealed_cells["%d,%d" % [gate_cell.x, gate_cell.y]] = true
 	_pen_sealed = sealed
 
 
+func configure_rescue_door(door_cell: Vector2i, unlocked: bool) -> void:
+	rescue_door_cell = door_cell
+	rescue_door_unlocked = unlocked
+
+
+func set_rescue_door_unlocked(unlocked: bool) -> void:
+	rescue_door_unlocked = unlocked
+	if unlocked and rescue_door_cell.x >= 0:
+		_sealed_cells.erase("%d,%d" % [rescue_door_cell.x, rescue_door_cell.y])
+
+
 func set_pen_open(open: bool) -> void:
 	_pen_sealed = not open
+	if open:
+		set_rescue_door_unlocked(true)
 
 
 func is_tile_walkable(cell_x: int, cell_z: int) -> bool:
 	if cell_x < 0 or cell_x >= cols or cell_z < 0 or cell_z >= rows:
 		return false
+	if _is_rescue_door_cell(cell_x, cell_z) and rescue_door_unlocked:
+		return _door_tile_walkable(cell_x, cell_z)
 	if _pen_sealed and _sealed_cells.has("%d,%d" % [cell_x, cell_z]):
 		return false
 	return is_code_walkable(lines[cell_z].unicode_at(cell_x))
 
 
 static func is_code_walkable(cp: int) -> bool:
-	return cp != CP_WALL
+	return cp != CP_WALL and cp != CP_G
 
 
 func is_position_walkable(pos: Vector3) -> bool:
 	if lines.is_empty():
 		return true
+	var tx: int = tile_x(pos.x)
+	var tz: int = tile_z(pos.z)
+	if _is_rescue_door_cell(tx, tz):
+		var allowed: bool = _evaluate_rescue_door_pass(pos, tx, tz)
+		_log_rescue_door_attempt(tx, tz, allowed)
+		return allowed
 	var r: float = body_radius * 0.85
 	var samples: Array[Vector3] = [
 		Vector3.ZERO,
@@ -92,6 +117,51 @@ func is_position_walkable(pos: Vector3) -> bool:
 	return true
 
 
+func _is_rescue_door_cell(cell_x: int, cell_z: int) -> bool:
+	return rescue_door_cell.x >= 0 and cell_x == rescue_door_cell.x and cell_z == rescue_door_cell.y
+
+
+func _door_tile_walkable(cell_x: int, cell_z: int) -> bool:
+	if cell_x < 0 or cell_x >= cols or cell_z < 0 or cell_z >= rows:
+		return false
+	return is_code_walkable(lines[cell_z].unicode_at(cell_x))
+
+
+func _evaluate_rescue_door_pass(world_pos: Vector3, cell_x: int, cell_z: int) -> bool:
+	for blocker: Vector3 in static_blockers:
+		if _point_blocked_by(world_pos, blocker):
+			return false
+	for blocker: Vector3 in dynamic_blockers:
+		if _point_blocked_by(world_pos, blocker):
+			return false
+	if not rescue_door_unlocked:
+		return is_tile_walkable(cell_x, cell_z)
+	return _door_tile_walkable(cell_x, cell_z)
+
+
+func _tile_type_label(cell_x: int, cell_z: int) -> String:
+	if cell_x < 0 or cell_x >= cols or cell_z < 0 or cell_z >= rows:
+		return "OOB"
+	var cp: int = lines[cell_z].unicode_at(cell_x)
+	return char(cp)
+
+
+func _log_rescue_door_attempt(cell_x: int, cell_z: int, movement_allowed: bool) -> void:
+	if not debug_rescue_door:
+		return
+	print(
+		"RescueDoor attempt cell=(%d,%d) tile=%s unlocked=%s movement_allowed=%s grid_matches_collision=%s"
+		% [
+			cell_x,
+			cell_z,
+			_tile_type_label(cell_x, cell_z),
+			str(rescue_door_unlocked),
+			str(movement_allowed),
+			str(rescue_door_cell == Vector2i(cell_x, cell_z)),
+		]
+	)
+
+
 func _is_world_point_walkable(world_pos: Vector3) -> bool:
 	for blocker: Vector3 in static_blockers:
 		if _point_blocked_by(world_pos, blocker):
@@ -99,7 +169,11 @@ func _is_world_point_walkable(world_pos: Vector3) -> bool:
 	for blocker: Vector3 in dynamic_blockers:
 		if _point_blocked_by(world_pos, blocker):
 			return false
-	return is_tile_walkable(tile_x(world_pos.x), tile_z(world_pos.z))
+	var tx: int = tile_x(world_pos.x)
+	var tz: int = tile_z(world_pos.z)
+	if _is_rescue_door_cell(tx, tz):
+		return _evaluate_rescue_door_pass(world_pos, tx, tz)
+	return is_tile_walkable(tx, tz)
 
 
 func _point_blocked_by(world_pos: Vector3, blocker: Vector3) -> bool:
