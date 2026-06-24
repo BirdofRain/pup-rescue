@@ -3,6 +3,7 @@ extends Node
 
 const FollowerPuppyScript := preload("res://scripts/follower_puppy.gd")
 const FollowerSnapScript := preload("res://scripts/follower_snap.gd")
+const FollowerRoleScript := preload("res://scripts/follower_role.gd")
 
 const RING_CAP: int = 512
 const REAR_LOD_INDEX: int = 6
@@ -19,7 +20,12 @@ const PATH_REBUILD_BUDGET: int = 2
 @export var min_player_clearance: float = 0.55
 
 var _collar_id: String = ""
-var _followers: Array[Node3D] = []
+var _companion: Node3D = null
+var _companion_id: String = ""
+var _companion_coat_index: int = -1
+var _escort: Node3D = null
+var _escort_coat_index: int = -1
+var _temporary_rescues: Array[Node3D] = []
 var _history_ring: Array = []
 var _hist_head: int = 0
 var _hist_size: int = 0
@@ -40,7 +46,190 @@ var _snap_grace_until_ms: int = 0
 
 
 func is_active() -> bool:
-	return _active
+	return _active or has_escort() or has_permanent_companion()
+
+
+func has_permanent_companion() -> bool:
+	return is_instance_valid(_companion)
+
+
+func get_permanent_companion_id() -> String:
+	return _companion_id if has_permanent_companion() else ""
+
+
+func get_permanent_companion() -> Node3D:
+	return _companion if has_permanent_companion() else null
+
+
+func has_escort() -> bool:
+	return is_instance_valid(_escort)
+
+
+func has_island_escort() -> bool:
+	return has_escort()
+
+
+func get_escort() -> Node3D:
+	return _escort if has_escort() else null
+
+
+func get_island_escort() -> Node3D:
+	return get_escort()
+
+
+func spawn_escort(
+	spawn_pos: Vector3,
+	nav: MazeNav,
+	floor_y: float,
+	parent: Node3D,
+	coat_index: int,
+	player_start: Vector3 = Vector3.ZERO
+) -> bool:
+	return spawn_island_escort(spawn_pos, nav, floor_y, parent, coat_index, player_start)
+
+
+func spawn_island_escort(
+	spawn_pos: Vector3,
+	nav: MazeNav,
+	floor_y: float,
+	parent: Node3D,
+	coat_index: int,
+	player_start: Vector3 = Vector3.ZERO
+) -> bool:
+	if has_escort():
+		return false
+	if nav == null or parent == null:
+		return false
+	if not _active:
+		activate(nav, floor_y, parent, player_start if player_start != Vector3.ZERO else spawn_pos)
+	var pup := Node3D.new()
+	pup.name = "IslandEscort"
+	pup.set_script(FollowerPuppyScript)
+	parent.add_child(pup)
+	var pos := spawn_pos
+	pos.y = floor_y
+	(pup as Node).call("setup", nav, pos, coat_index, -1)
+	pup.call("set_follower_role", FollowerRoleScript.ROLE_ISLAND_ESCORT)
+	_escort = pup
+	_escort_coat_index = coat_index
+	if _collar_id != "":
+		pup.call("apply_collar", _collar_id)
+	return true
+
+
+func spawn_permanent_companion(
+	spawn_pos: Vector3,
+	nav: MazeNav,
+	floor_y: float,
+	parent: Node3D,
+	companion_id: String,
+	coat_index: int,
+	player_start: Vector3 = Vector3.ZERO,
+	collar_accessory_id: String = ""
+) -> bool:
+	if has_permanent_companion():
+		return false
+	if nav == null or parent == null or companion_id == "":
+		return false
+	if not _active:
+		activate(nav, floor_y, parent, player_start if player_start != Vector3.ZERO else spawn_pos)
+	var pup := Node3D.new()
+	pup.name = "PermanentCompanion"
+	pup.set_script(FollowerPuppyScript)
+	parent.add_child(pup)
+	var pos := spawn_pos
+	pos.y = floor_y
+	(pup as Node).call("setup", nav, pos, coat_index, -1)
+	pup.call("set_follower_role", FollowerRoleScript.ROLE_PERMANENT_COMPANION)
+	_companion = pup
+	_companion_id = companion_id
+	_companion_coat_index = coat_index
+	var collar_id: String = collar_accessory_id if collar_accessory_id != "" else _collar_id
+	if collar_id != "":
+		pup.call("apply_collar", collar_id)
+	return true
+
+
+func clear_companion() -> void:
+	if is_instance_valid(_companion):
+		_companion.queue_free()
+	_companion = null
+	_companion_id = ""
+	_companion_coat_index = -1
+
+
+func clear_escort() -> void:
+	if is_instance_valid(_escort):
+		_escort.queue_free()
+	_escort = null
+	_escort_coat_index = -1
+
+
+func clear_special_followers() -> void:
+	clear_companion()
+	clear_escort()
+
+
+func is_escort_at_exit(exit_pos: Vector3, leader_pos: Vector3) -> bool:
+	if not has_escort():
+		return false
+	var pup: Node3D = _escort
+	var p: Vector3 = pup.global_position
+	p.y = 0.0
+	var exit_flat := exit_pos
+	exit_flat.y = 0.0
+	var leader_flat := leader_pos
+	leader_flat.y = 0.0
+	var at_exit: bool = p.distance_to(exit_flat) <= gather_radius
+	var near_leader: bool = p.distance_to(leader_flat) <= gather_radius * 1.35
+	var near_exit: bool = p.distance_to(exit_flat) <= gather_radius * 2.4
+	return at_exit or near_leader or near_exit
+
+
+func gather_escort_to_exit(exit_pos: Vector3) -> void:
+	gather_special_followers_to_exit(exit_pos)
+
+
+func gather_special_followers_to_exit(exit_pos: Vector3) -> void:
+	if has_permanent_companion():
+		var companion_pos := exit_pos + Vector3(-0.55, 0.0, 0.25)
+		companion_pos.y = _floor_y
+		_companion.call("snap_to", companion_pos)
+	if has_escort():
+		var escort_pos := exit_pos + Vector3(-0.35, 0.0, 0.35)
+		escort_pos.y = _floor_y
+		_escort.call("snap_to", escort_pos)
+
+
+func tick_escort(delta: float, player_pos: Vector3, speed_mult: float = 1.0) -> void:
+	if not has_escort():
+		return
+	if _hist_size == 0:
+		seed_history(player_pos)
+	var pup: Node3D = _escort
+	var trail_avail: float = _trail_length_cached
+	var slot: int = 1 if has_permanent_companion() else 0
+	var need_dist: float = follow_spacing * (float(slot) + 0.5)
+	var target: Vector3 = _trail_target_for_index(slot, player_pos, pup.global_position, trail_avail)
+	target.y = _floor_y
+	pup.call("set_path_rebuild_allowed", _consume_path_budget())
+	pup.call("set_target", target)
+	pup.call("update_follow", delta, speed_mult)
+
+
+func tick_companion(delta: float, player_pos: Vector3, speed_mult: float = 1.0) -> void:
+	if not has_permanent_companion():
+		return
+	if _hist_size == 0:
+		seed_history(player_pos)
+	var pup: Node3D = _companion
+	var trail_avail: float = _trail_length_cached
+	var need_dist: float = follow_spacing * 0.5
+	var target: Vector3 = _trail_target_for_index(0, player_pos, pup.global_position, trail_avail)
+	target.y = _floor_y
+	pup.call("set_path_rebuild_allowed", _consume_path_budget())
+	pup.call("set_target", target)
+	pup.call("update_follow", delta, speed_mult)
 
 
 func set_snap_mode(mode: int) -> void:
@@ -68,27 +257,52 @@ func seed_history(pos: Vector3) -> void:
 
 func set_collar_accessory(accessory_id: String) -> void:
 	_collar_id = accessory_id
-	for pup: Node3D in _followers:
+	for pup: Node3D in _temporary_rescues:
 		if is_instance_valid(pup):
 			pup.call("apply_collar", accessory_id)
+	if has_escort():
+		_escort.call("apply_collar", accessory_id)
+	if has_permanent_companion():
+		_companion.call("apply_collar", accessory_id)
 
 
 func add_follower(spawn_pos: Vector3, _breed_index: int = -1) -> bool:
 	if not _active or _parent == null or _nav == null:
 		return false
-	if _followers.size() >= max_followers:
+	if _temporary_rescues.size() >= max_followers:
 		return false
 	var pup := Node3D.new()
-	pup.name = "Follower_%d" % _followers.size()
+	pup.name = "Follower_%d" % _temporary_rescues.size()
 	pup.set_script(FollowerPuppyScript)
 	_parent.add_child(pup)
 	var pos := spawn_pos
 	pos.y = _floor_y
-	(pup as Node).call("setup", _nav, pos, -1, _followers.size())
+	(pup as Node).call("setup", _nav, pos, -1, _temporary_rescues.size())
+	pup.call("set_follower_role", FollowerRoleScript.ROLE_TEMPORARY_RESCUE)
 	if _collar_id != "":
 		pup.call("apply_collar", _collar_id)
-	_followers.append(pup)
+	_temporary_rescues.append(pup)
 	return true
+
+
+func clear_temporary_rescues() -> void:
+	for f in _temporary_rescues:
+		if is_instance_valid(f):
+			f.queue_free()
+	_temporary_rescues.clear()
+	_held_at_gather.clear()
+	if has_escort() or has_permanent_companion():
+		return
+	_snap_grace_until_ms = 0
+	_clear_history()
+	_active = false
+	_parent = null
+	_has_last_player_pos = false
+	_player_idle_time = 0.0
+
+
+func clear_session_temporaries() -> void:
+	clear_temporary_rescues()
 
 
 func release_pen_followers(
@@ -99,7 +313,7 @@ func release_pen_followers(
 	seed_pos: Vector3,
 	snap_grace_sec: float = 5.0
 ) -> int:
-	clear()
+	clear_temporary_rescues()
 	var seed: Vector3 = seed_pos
 	if seed == Vector3.ZERO and not positions.is_empty():
 		seed = positions[0]
@@ -107,7 +321,7 @@ func release_pen_followers(
 	_snap_grace_until_ms = Time.get_ticks_msec() + int(snap_grace_sec * 1000.0)
 	var spawned := 0
 	for pos in positions:
-		if _followers.size() >= max_followers:
+		if _temporary_rescues.size() >= max_followers:
 			break
 		if add_follower(pos, -1):
 			spawned += 1
@@ -128,7 +342,7 @@ func spawn_rescue_group_at_positions(
 	activate(nav, floor_y, parent, seed)
 	var spawned := 0
 	for pos in positions:
-		if _followers.size() >= max_followers:
+		if _temporary_rescues.size() >= max_followers:
 			break
 		if add_follower(pos, -1):
 			spawned += 1
@@ -149,7 +363,7 @@ func spawn_rescue_group(
 	rng.randomize()
 	var spawned := 0
 	for i in count:
-		if _followers.size() >= max_followers:
+		if _temporary_rescues.size() >= max_followers:
 			break
 		var offset := Vector3(
 			rng.randf_range(-0.35, 0.35),
@@ -167,8 +381,8 @@ func rebind_for_level(nav: MazeNav, floor_y: float, parent: Node3D, player_start
 	_nav = nav
 	_floor_y = floor_y
 	_parent = parent
-	_prune_invalid_followers()
-	if _followers.is_empty():
+	_prune_invalid_temporary_rescues()
+	if _temporary_rescues.is_empty() and not has_escort() and not has_permanent_companion():
 		_active = false
 		_clear_history()
 		return
@@ -176,7 +390,7 @@ func rebind_for_level(nav: MazeNav, floor_y: float, parent: Node3D, player_start
 	seed_history(player_start)
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
-	for pup: Node3D in _followers:
+	for pup: Node3D in _temporary_rescues:
 		if not is_instance_valid(pup):
 			continue
 		if pup.get_parent() != parent:
@@ -189,26 +403,88 @@ func rebind_for_level(nav: MazeNav, floor_y: float, parent: Node3D, player_start
 		var pos := player_start + offset
 		pos.y = floor_y
 		pup.call("rebind_nav", nav, pos)
+	if has_permanent_companion():
+		if _companion.get_parent() != parent:
+			_companion.reparent(parent)
+		var companion_pos := player_start + Vector3(-0.55, 0.0, 0.25)
+		companion_pos.y = floor_y
+		_companion.call("rebind_nav", nav, companion_pos)
+	if has_escort():
+		if _escort.get_parent() != parent:
+			_escort.reparent(parent)
+		var escort_pos := player_start + Vector3(-0.35, 0.0, 0.35)
+		escort_pos.y = floor_y
+		_escort.call("rebind_nav", nav, escort_pos)
 
 
-func _prune_invalid_followers() -> void:
+func _prune_invalid_temporary_rescues() -> void:
 	var kept: Array[Node3D] = []
-	for pup in _followers:
+	for pup in _temporary_rescues:
 		if is_instance_valid(pup):
 			kept.append(pup)
-	_followers = kept
+	_temporary_rescues = kept
+
+
+func get_temporary_rescues() -> Array[Node3D]:
+	_prune_invalid_temporary_rescues()
+	return _temporary_rescues.duplicate()
+
+
+func total_special_follower_count() -> int:
+	var count: int = 0
+	if has_permanent_companion():
+		count += 1
+	if has_escort():
+		count += 1
+	return count
+
+
+func count_all_present_puppies() -> int:
+	return count_temporary_rescues() + total_special_follower_count()
+
+
+func validate_role_separation() -> PackedStringArray:
+	var errors: PackedStringArray = []
+	_prune_invalid_temporary_rescues()
+	for pup: Node3D in _temporary_rescues:
+		if not is_instance_valid(pup):
+			continue
+		if pup == _companion:
+			errors.append("Permanent companion is listed among temporary rescues.")
+		if pup == _escort:
+			errors.append("Island escort is listed among temporary rescues.")
+		if pup.has_method("is_temporary_rescue") and not bool(pup.call("is_temporary_rescue")):
+			errors.append("Non-temporary follower found in temporary rescue list.")
+	if has_permanent_companion() and _companion.has_method("is_temporary_rescue"):
+		if bool(_companion.call("is_temporary_rescue")):
+			errors.append("Permanent companion has temporary rescue role.")
+		if _companion.has_method("is_island_escort") and bool(_companion.call("is_island_escort")):
+			errors.append("Permanent companion incorrectly marked as island escort.")
+	if has_escort() and _escort.has_method("is_temporary_rescue"):
+		if bool(_escort.call("is_temporary_rescue")):
+			errors.append("Island escort has temporary rescue role.")
+	return errors
+
+
+func count_temporary_rescues() -> int:
+	_prune_invalid_temporary_rescues()
+	return _temporary_rescues.size()
 
 
 func count_followers() -> int:
-	_prune_invalid_followers()
-	return _followers.size()
+	return count_temporary_rescues()
+
+
+func count_session_rescue_points() -> int:
+	return count_temporary_rescues()
 
 
 func clear() -> void:
-	for f in _followers:
+	clear_special_followers()
+	for f in _temporary_rescues:
 		if is_instance_valid(f):
 			f.queue_free()
-	_followers.clear()
+	_temporary_rescues.clear()
 	_held_at_gather.clear()
 	_snap_grace_until_ms = 0
 	_clear_history()
@@ -225,16 +501,23 @@ func tick(
 	speed_mult: float = 1.0,
 	snap_mode: int = FollowerSnapScript.MODE_TRAIL
 ) -> void:
-	if not _active:
+	if not _active and not has_escort() and not has_permanent_companion():
 		return
 	_snap_mode = FollowerSnapScript.clamp_mode(snap_mode)
+	_reset_path_budget_if_needed()
+	if has_permanent_companion():
+		tick_companion(delta, player_pos, speed_mult)
+	if has_escort():
+		tick_escort(delta, player_pos, speed_mult)
+	if not _active:
+		return
 	_reset_path_budget_if_needed()
 	_tick_parity += 1
 	_update_player_idle(player_pos, delta)
 	_record_player(player_pos)
 	if _hist_size == 0:
 		return
-	var count: int = _followers.size()
+	var count: int = _temporary_rescues.size()
 	var trail_avail: float = _trail_length_cached
 	var gathering: bool = gather_point != Vector3.ZERO
 	var gather_blend: float = 0.0
@@ -245,7 +528,7 @@ func tick(
 	if not gathering:
 		_held_at_gather.clear()
 	for i in range(count):
-		var pup: Node3D = _followers[i]
+		var pup: Node3D = _temporary_rescues[i]
 		if not is_instance_valid(pup):
 			continue
 		while _held_at_gather.size() <= i:
@@ -489,13 +772,13 @@ func _record_player(player_pos: Vector3) -> void:
 
 
 func _history_capacity() -> int:
-	var slots: int = maxi(max_followers, _followers.size())
+	var slots: int = maxi(max_followers, _temporary_rescues.size())
 	var needed_dist: float = follow_spacing * float(slots + 3)
 	return mini(RING_CAP, maxi(max_history, int(needed_dist / min_history_step) + 96))
 
 
 func _min_history_keep() -> int:
-	var slots: int = maxi(max_followers, _followers.size())
+	var slots: int = maxi(max_followers, _temporary_rescues.size())
 	return mini(_hist_size, int((follow_spacing * float(slots + 1)) / min_history_step) + 48)
 
 
@@ -519,21 +802,29 @@ func _sample_trail(distance_behind: float) -> Vector3:
 
 
 func snap_all_to(pos: Vector3) -> void:
-	_prune_invalid_followers()
-	var count: int = _followers.size()
+	_prune_invalid_temporary_rescues()
+	var count: int = _temporary_rescues.size()
 	for i in range(count):
-		var pup: Node3D = _followers[i]
+		var pup: Node3D = _temporary_rescues[i]
 		if not is_instance_valid(pup):
 			continue
 		var ring := _ring_offset(i, count, 0.35)
 		var p := pos + ring
 		p.y = _floor_y
 		pup.call("snap_to", p)
+	if has_escort():
+		var escort_pos := pos + Vector3(-0.35, 0.0, 0.35)
+		escort_pos.y = _floor_y
+		_escort.call("snap_to", escort_pos)
+	if has_permanent_companion():
+		var companion_pos := pos + Vector3(-0.55, 0.0, 0.25)
+		companion_pos.y = _floor_y
+		_companion.call("snap_to", companion_pos)
 
 
 func count_escorted_at(exit_pos: Vector3, leader_pos: Vector3) -> int:
 	var n := 0
-	for pup in _followers:
+	for pup in _temporary_rescues:
 		if not is_instance_valid(pup):
 			continue
 		var p: Vector3 = pup.global_position
@@ -549,7 +840,7 @@ func count_escorted_at(exit_pos: Vector3, leader_pos: Vector3) -> int:
 
 func count_gathered_at(gather_pos: Vector3) -> int:
 	var n := 0
-	for pup in _followers:
+	for pup in _temporary_rescues:
 		if not is_instance_valid(pup):
 			continue
 		var p: Vector3 = pup.global_position
@@ -562,13 +853,13 @@ func count_gathered_at(gather_pos: Vector3) -> int:
 
 
 func required_at_exit_count(required_ratio: float = 0.75) -> int:
-	if _followers.is_empty():
+	if _temporary_rescues.is_empty():
 		return 0
-	return ceili(float(_followers.size()) * required_ratio)
+	return ceili(float(_temporary_rescues.size()) * required_ratio)
 
 
 func all_gathered_at(gather_pos: Vector3, required_ratio: float = 0.75) -> bool:
-	if _followers.is_empty():
+	if _temporary_rescues.is_empty():
 		return true
 	return count_gathered_at(gather_pos) >= required_at_exit_count(required_ratio)
 

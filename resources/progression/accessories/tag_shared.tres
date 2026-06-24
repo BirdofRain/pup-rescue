@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="AccessoryDefinition" load_steps=2 format=3 uid="uid://accessory_tag_shared"]
+
+[ext_resource type="Script" path="res://scripts/progression/accessory_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+accessory_id = "tag_shared"
+display_name = "Shared Buddy Tag"
+category = "neck"
+visual_reference = "res://data/accessories.json#tag_shared"
+compatible_socket = "collar"
+allows_duplicate_equip = true
+source_companion_id = "companion_sandy"
+source_island_id = "beach"

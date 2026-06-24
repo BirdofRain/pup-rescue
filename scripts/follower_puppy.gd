@@ -2,6 +2,7 @@ extends Node3D
 
 const PupColorsScript := preload("res://scripts/pup_colors.gd")
 const PupAppearanceScript := preload("res://scripts/pup_appearance.gd")
+const FollowerRoleScript := preload("res://scripts/follower_role.gd")
 
 @export var move_speed: float = 6.5
 @export var catchup_distance: float = 0.85
@@ -32,9 +33,10 @@ var _appearance = null
 var _coat_color: Color = Color.WHITE
 var _follower_index: int = 0
 var _mesh_loaded: bool = false
+var follower_role: int = FollowerRoleScript.ROLE_TEMPORARY_RESCUE
 
 
-func setup(nav: MazeNav, spawn_pos: Vector3, _breed_index: int = -1, follower_index: int = -1) -> void:
+func setup(nav: MazeNav, spawn_pos: Vector3, breed_index: int = -1, follower_index: int = -1) -> void:
 	_nav = nav
 	_target = spawn_pos
 	_velocity = Vector3.ZERO
@@ -46,21 +48,71 @@ func setup(nav: MazeNav, spawn_pos: Vector3, _breed_index: int = -1, follower_in
 	global_position = spawn_pos
 	global_position.y = floor_y
 	_last_pos = global_position
-	if follower_index >= 0:
+	if breed_index >= 0:
+		_coat_color = PupColorsScript.get_color(breed_index)
+	elif follower_index >= 0:
 		_follower_index = follower_index
 		_coat_color = PupColorsScript.get_color(follower_index)
 	_build_mesh()
 
 
+func set_follower_role(role: int) -> void:
+	follower_role = role
+
+
+func get_follower_role() -> int:
+	return follower_role
+
+
+func is_temporary_rescue() -> bool:
+	return follower_role == FollowerRoleScript.ROLE_TEMPORARY_RESCUE
+
+
+func is_island_escort() -> bool:
+	return follower_role == FollowerRoleScript.ROLE_ISLAND_ESCORT
+
+
+func is_permanent_companion() -> bool:
+	return follower_role == FollowerRoleScript.ROLE_PERMANENT_COMPANION
+
+
+func set_coat_index(coat_index: int) -> void:
+	_coat_color = PupColorsScript.get_color(coat_index)
+	if _mesh != null:
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = _coat_color
+		mat.roughness = 0.85
+		mat.metallic = 0.0
+		mat.emission_enabled = true
+		mat.emission = _coat_color * 0.22
+		_mesh.material_override = mat
+		if _mesh.mesh != null:
+			for i in range(_mesh.mesh.get_surface_count()):
+				_mesh.set_surface_override_material(i, mat)
+	else:
+		_build_mesh()
+
+
 func apply_collar(accessory_id: String) -> void:
-	if _appearance == null:
-		_appearance = PupAppearanceScript.new()
-		_appearance.name = "FollowerAppearance"
-		if _mesh != null:
-			_appearance.mount_to(_mesh)
-		else:
-			add_child(_appearance)
+	_ensure_appearance()
 	_appearance.apply_collar_only(accessory_id)
+
+
+func apply_companion_loadout(save: GameSave, companion_id: String) -> void:
+	_ensure_appearance()
+	var loadout: Dictionary = save.get_companion_loadout(companion_id)
+	_appearance.apply_loadout(loadout)
+
+
+func _ensure_appearance() -> void:
+	if _appearance != null:
+		return
+	_appearance = PupAppearanceScript.new()
+	_appearance.name = "FollowerAppearance"
+	if _mesh != null:
+		_appearance.mount_to(_mesh)
+	else:
+		add_child(_appearance)
 
 
 func rebind_nav(nav: MazeNav, pos: Vector3) -> void:

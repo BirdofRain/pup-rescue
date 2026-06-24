@@ -101,6 +101,16 @@ func _draw_accessory_icon(r: Rect2, entry: Dictionary) -> void:
 		"backpack_box":
 			draw_rect(Rect2(cx - r.size.x * 0.2, cy - r.size.y * 0.22, r.size.x * 0.4, r.size.y * 0.44), col)
 			draw_rect(Rect2(cx - r.size.x * 0.12, cy - r.size.y * 0.32, r.size.x * 0.24, r.size.y * 0.12), col.lightened(0.15))
+		"trail_sparkle":
+			for i in 3:
+				draw_circle(
+					Vector2(cx, cy + r.size.y * (0.08 + float(i) * 0.1)),
+					r.size.x * (0.08 - float(i) * 0.015),
+					col.lightened(float(i) * 0.08)
+				)
+		"aura_glow":
+			draw_arc(Vector2(cx, cy), r.size.x * 0.28, 0.0, TAU, 32, Color(col, 0.45), 6.0)
+			draw_circle(Vector2(cx, cy), r.size.x * 0.12, Color(col, 0.65))
 		_:
 			draw_circle(Vector2(cx, cy), r.size.x * 0.18, col)
 

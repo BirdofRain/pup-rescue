@@ -10,5 +10,8 @@
   {"id": "scarf_purple", "slot": "collar", "name": "Purple Scarf", "cost": 28, "shape": "bandana", "color": "#9B6BD4", "offset": [0, 0.26, 0.06], "scale": 0.24},
   {"id": "pack_pink", "slot": "pack", "name": "Pink Backpack", "cost": 40, "shape": "backpack_box", "color": "#E878A8", "offset": [0, 0.32, -0.14], "scale": 0.2},
   {"id": "saddle_brown", "slot": "pack", "name": "Brown Saddle Pack", "cost": 38, "shape": "backpack_box", "color": "#8B5E3C", "offset": [0, 0.34, -0.16], "scale": 0.24},
-  {"id": "tail_ribbon", "slot": "pack", "name": "Tail Ribbon", "cost": 24, "shape": "bandana", "color": "#FF6688", "offset": [0, 0.22, -0.18], "scale": 0.18}
+  {"id": "tail_ribbon", "slot": "pack", "name": "Tail Ribbon", "cost": 24, "shape": "backpack_box", "color": "#FF6688", "offset": [0, 0.22, -0.18], "scale": 0.18},
+  {"id": "trail_sparkle", "slot": "trail", "name": "Sparkle Trail", "cost": 30, "shape": "trail_sparkle", "color": "#FFD966", "offset": [0, 0.12, -0.22], "scale": 0.16},
+  {"id": "aura_glow", "slot": "aura", "name": "Soft Glow", "cost": 34, "shape": "aura_glow", "color": "#88CCFF", "offset": [0, 0.2, 0], "scale": 0.28},
+  {"id": "tag_shared", "slot": "collar", "name": "Shared Buddy Tag", "cost": 15, "shape": "star_pin", "color": "#6FA8FF", "offset": [0, 0.28, 0.1], "scale": 0.12, "allows_duplicate": true}
 ]

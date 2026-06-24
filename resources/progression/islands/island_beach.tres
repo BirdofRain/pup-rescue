@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="IslandDefinition" load_steps=3 format=3 uid="uid://island_beach"]
+
+[ext_resource type="Script" path="res://scripts/progression/island_definition.gd" id="1"]
+[ext_resource type="Resource" script_class="UnlockRequirement" path="res://resources/progression/islands/beach_unlock.tres" id="2"]
+
+[resource]
+script = ExtResource("1")
+island_id = "beach"
+display_name = "Sunny Beach"
+description = "Warm sand, gentle tides, and a hidden golden pup waiting to be found."
+theme_id = "beach"
+level_ids = PackedStringArray("level_beach_01", "level_beach_02", "level_beach_03", "level_beach_04", "level_beach_05")
+special_companion_id = "companion_sandy"
+map_icon_path = ""
+map_banner_path = ""
+wall_palette_index = 0
+unlock_requirement = ExtResource("2")
+escort_badges_required = 5

@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="AccessoryDefinition" load_steps=2 format=3 uid="uid://accessory_tail_ribbon"]
+
+[ext_resource type="Script" path="res://scripts/progression/accessory_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+accessory_id = "tail_ribbon"
+display_name = "Tail Ribbon"
+category = "back"
+visual_reference = "res://data/accessories.json#tail_ribbon"
+compatible_socket = "pack"
+source_companion_id = "companion_sandy"
+source_island_id = "beach"

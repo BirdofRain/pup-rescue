@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="AccessoryDefinition" load_steps=2 format=3 uid="uid://accessory_bandana_green"]
+
+[ext_resource type="Script" path="res://scripts/progression/accessory_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+accessory_id = "bandana_green"
+display_name = "Green Bandana"
+category = "neck"
+visual_reference = "res://data/accessories.json#bandana_green"
+compatible_socket = "collar"
+source_companion_id = "companion_sandy"
+source_island_id = "beach"

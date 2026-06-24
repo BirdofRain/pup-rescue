@@ -6,6 +6,9 @@ const ProgressTrackerScript := preload("res://scripts/progress_tracker.gd")
 const DifficultyConfigScript := preload("res://scripts/difficulty_config.gd")
 const FollowerSnapScript := preload("res://scripts/follower_snap.gd")
 const TouchControlConfigScript := preload("res://scripts/touch_control_config.gd")
+const IslandCatalogScript := preload("res://scripts/island_catalog.gd")
+const IslandProgressScript := preload("res://scripts/island_progress.gd")
+const ProgressionRegistryScript := preload("res://scripts/progression/progression_registry.gd")
 
 const MENU_TEXT := Color(0.16, 0.22, 0.32)
 const MENU_MUTED := Color(0.34, 0.40, 0.50)
@@ -55,6 +58,7 @@ var _name_presets: FlowContainer
 var _difficulty_flow: FlowContainer
 var _snap_flow: FlowContainer
 var _touch_flow: FlowContainer
+var _companion_flow: FlowContainer
 var _selected_coat: int = 0
 var _selected_difficulty: int = DifficultyConfigScript.MODE_BEGINNER
 var _selected_snap: int = FollowerSnapScript.MODE_TRAIL
@@ -86,6 +90,8 @@ func _ready() -> void:
 	_build_difficulty_buttons()
 	_build_snap_buttons()
 	_build_touch_control_buttons()
+	_build_companion_buttons()
+	_build_hub_navigation()
 	_sync_coat_ui(_selected_coat)
 	_sync_difficulty_ui(_selected_difficulty)
 	_sync_snap_ui(_selected_snap)
@@ -438,6 +444,99 @@ func _commit_touch() -> void:
 	_save.set_touch_control_mode(_selected_touch)
 
 
+func _build_companion_buttons() -> void:
+	var vbox := get_node_or_null("RootMargin/RootVBox/Scroll/SettingsPanel/VBox")
+	if vbox == null:
+		return
+	if get_node_or_null("RootMargin/RootVBox/Scroll/SettingsPanel/VBox/CompanionFlow") != null:
+		_companion_flow = get_node_or_null(
+			"RootMargin/RootVBox/Scroll/SettingsPanel/VBox/CompanionFlow"
+		) as FlowContainer
+		_refresh_companion_buttons()
+		return
+	var status := vbox.get_node_or_null("SectionStatus")
+	var insert_idx: int = status.get_index() if status != null else vbox.get_child_count()
+	var section := Label.new()
+	section.name = "SectionCompanions"
+	section.text = "Companions"
+	section.add_theme_font_size_override("font_size", 14)
+	section.add_theme_color_override("font_color", SECTION_COLOR)
+	vbox.add_child(section)
+	vbox.move_child(section, insert_idx)
+	insert_idx += 1
+	_companion_flow = FlowContainer.new()
+	_companion_flow.name = "CompanionFlow"
+	_companion_flow.add_theme_constant_override("h_separation", 8)
+	_companion_flow.add_theme_constant_override("v_separation", 8)
+	_companion_flow.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_child(_companion_flow)
+	vbox.move_child(_companion_flow, insert_idx)
+	_refresh_companion_buttons()
+
+
+func _refresh_companion_buttons() -> void:
+	if _companion_flow == null:
+		return
+	for c in _companion_flow.get_children():
+		c.queue_free()
+	var none_btn := Button.new()
+	none_btn.text = "None"
+	none_btn.custom_minimum_size = Vector2(72, 38)
+	none_btn.focus_mode = Control.FOCUS_NONE
+	_style_preset_button(none_btn)
+	none_btn.pressed.connect(_select_companion.bind(""))
+	_companion_flow.add_child(none_btn)
+	for companion_id: String in _save.owned_companions:
+		var pup_def: Dictionary = _companion_def_for_id(companion_id)
+		var btn := Button.new()
+		btn.text = str(pup_def.get("name", companion_id))
+		btn.custom_minimum_size = Vector2(88, 38)
+		btn.focus_mode = Control.FOCUS_NONE
+		_style_preset_button(btn)
+		btn.pressed.connect(_select_companion.bind(companion_id))
+		_companion_flow.add_child(btn)
+	_sync_companion_ui()
+
+
+func _companion_def_for_id(companion_id: String) -> Dictionary:
+	var companion: CompanionDefinition = ProgressionRegistryScript.get_companion(companion_id)
+	if companion != null:
+		return {
+			"id": companion.companion_id,
+			"name": companion.default_name,
+		}
+	return {"name": companion_id}
+
+
+func _select_companion(companion_id: String) -> void:
+	_save.set_selected_companion(companion_id)
+	_save.save_game()
+	_sync_companion_ui()
+
+
+func _sync_companion_ui() -> void:
+	if _companion_flow == null:
+		return
+	var selected := _save.selected_companion_id
+	for child in _companion_flow.get_children():
+		if child is Button:
+			var btn: Button = child
+			var id := "" if btn.text == "None" else _companion_id_for_name(btn.text)
+			if btn.text == "None" and selected == "":
+				btn.modulate = Color(1.0, 1.0, 0.85)
+			elif id == selected:
+				btn.modulate = Color(1.0, 1.0, 0.85)
+			else:
+				btn.modulate = Color.WHITE
+
+
+func _companion_id_for_name(display_name: String) -> String:
+	for companion: CompanionDefinition in ProgressionRegistryScript.all_companions():
+		if companion.default_name == display_name:
+			return companion.companion_id
+	return ""
+
+
 func _coat_count() -> int:
 	var n := PupColorsScript.count()
 	if n > 0:
@@ -527,10 +626,22 @@ func _refresh_progress_ui() -> void:
 		leaderboard_btn.disabled = not unlocked
 	if progress_hint_label:
 		if unlocked:
-			progress_hint_label.text = "Best: Level %d  |  Squad %d  |  %d rescued" % [
+			var island_id: String = _save.current_island_id
+			if island_id == "":
+				island_id = IslandCatalogScript.first_island_id()
+			var island_def: Dictionary = IslandCatalogScript.get_island(island_id)
+			var progress: Dictionary = _save.get_island_progress(island_id)
+			var badges: int = _save.escort_badge_count(island_id)
+			var required: int = IslandCatalogScript.badges_required(island_id)
+			var completed: int = IslandProgressScript.completed_count(
+				progress, IslandCatalogScript.level_count(island_id)
+			)
+			progress_hint_label.text = "%s  |  Levels %d  |  Badges %d/%d  |  Best Lv %d" % [
+				str(island_def.get("name", "Island")),
+				completed,
+				badges,
+				required,
 				_save.get_best_level(),
-				_save.get_best_squad(),
-				_save.get_best_rescued(),
 			]
 		else:
 			progress_hint_label.text = "Beat level 2 to unlock save & leaderboard"
@@ -542,7 +653,7 @@ func _on_play_pressed() -> void:
 	_commit_snap()
 	_commit_touch()
 	_save.prepare_new_game(_selected_coat_index())
-	_go_to_game()
+	get_tree().change_scene_to_file("res://scenes/IslandMap.tscn")
 
 
 func _on_continue_pressed() -> void:
@@ -552,6 +663,7 @@ func _on_continue_pressed() -> void:
 	_commit_touch()
 	_save.prepare_continue()
 	_save.coat_index = _selected_coat_index()
+	_save.set_play_target(_save.current_island_id, _save.current_local_level, false)
 	_save.save_game()
 	_go_to_game()
 
@@ -582,3 +694,48 @@ func _on_leaderboard_pressed() -> void:
 	if not _save.progress_features_unlocked():
 		return
 	get_tree().change_scene_to_file("res://scenes/Leaderboard.tscn")
+
+
+func _build_hub_navigation() -> void:
+	var play_vbox: VBoxContainer = get_node_or_null("RootMargin/RootVBox/PlayPanel/PlayVBox") as VBoxContainer
+	if play_vbox == null:
+		return
+	if play_vbox.get_node_or_null("HubNavRow") != null:
+		return
+	var row := HBoxContainer.new()
+	row.name = "HubNavRow"
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 10)
+	var extra_idx: int = play_vbox.get_node("ExtraButtons").get_index()
+	play_vbox.add_child(row)
+	play_vbox.move_child(row, extra_idx)
+	if _save.has_save():
+		var map_btn := Button.new()
+		map_btn.text = "Island Map"
+		map_btn.custom_minimum_size = Vector2(0, 44)
+		map_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		map_btn.pressed.connect(_on_island_map_pressed)
+		row.add_child(map_btn)
+	var clubhouse_btn := Button.new()
+	clubhouse_btn.text = "Puppy Clubhouse"
+	clubhouse_btn.custom_minimum_size = Vector2(0, 44)
+	clubhouse_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	clubhouse_btn.pressed.connect(_on_clubhouse_pressed)
+	row.add_child(clubhouse_btn)
+
+
+func _on_island_map_pressed() -> void:
+	_commit_pup_name()
+	_commit_difficulty()
+	_commit_snap()
+	_commit_touch()
+	if _save.has_save():
+		_save.load_save()
+	get_tree().change_scene_to_file("res://scenes/IslandMap.tscn")
+
+
+func _on_clubhouse_pressed() -> void:
+	_commit_pup_name()
+	if _save.has_save():
+		_save.load_save()
+	get_tree().change_scene_to_file("res://scenes/PuppyClubhouse.tscn")

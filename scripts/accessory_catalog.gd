@@ -1,6 +1,8 @@
 class_name AccessoryCatalog
 extends RefCounted
 
+const CompanionAccessoryConfigScript := preload("res://scripts/companion_accessory_config.gd")
+const ProgressionRegistryScript := preload("res://scripts/progression/progression_registry.gd")
 const DATA_PATH := "res://data/accessories.json"
 
 static var _entries: Array[Dictionary] = []
@@ -37,10 +39,51 @@ static func get_entry(id: String) -> Dictionary:
 static func get_for_slot(slot: String) -> Array[Dictionary]:
 	load_catalog()
 	var out: Array[Dictionary] = []
+	var normalized_slot := slot.strip_edges().to_lower()
 	for e: Dictionary in _entries:
-		if e.get("slot", "") == slot:
+		if str(e.get("slot", "")).strip_edges().to_lower() == normalized_slot:
 			out.append(e)
 	return out
+
+
+static func get_for_category(category: String) -> Array[Dictionary]:
+	var socket: String = CompanionAccessoryConfigScript.socket_for_category(category)
+	if socket == "":
+		return []
+	return get_for_slot(socket)
+
+
+static func get_socket_for_accessory(accessory_id: String) -> String:
+	var entry: Dictionary = get_entry(accessory_id)
+	if not entry.is_empty():
+		return str(entry.get("slot", "")).strip_edges().to_lower()
+	var def: AccessoryDefinition = ProgressionRegistryScript.get_accessory(accessory_id)
+	if def != null:
+		return def.resolved_socket()
+	return ""
+
+
+static func get_category_for_accessory(accessory_id: String) -> String:
+	var socket: String = get_socket_for_accessory(accessory_id)
+	return CompanionAccessoryConfigScript.category_for_socket(socket)
+
+
+static func allows_duplicate_equip(accessory_id: String) -> bool:
+	var def: AccessoryDefinition = ProgressionRegistryScript.get_accessory(accessory_id)
+	if def != null:
+		return def.allows_duplicate_equip
+	var entry: Dictionary = get_entry(accessory_id)
+	return bool(entry.get("allows_duplicate", false))
+
+
+static func display_name_for(accessory_id: String) -> String:
+	var def: AccessoryDefinition = ProgressionRegistryScript.get_accessory(accessory_id)
+	if def != null and def.display_name != "":
+		return def.display_name
+	var entry: Dictionary = get_entry(accessory_id)
+	if not entry.is_empty():
+		return str(entry.get("name", accessory_id))
+	return accessory_id
 
 
 static func random_shop_id(owned: Array[String]) -> String:

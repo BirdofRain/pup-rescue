@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="AccessoryDefinition" load_steps=2 format=3 uid="uid://accessory_bow_red"]
+
+[ext_resource type="Script" path="res://scripts/progression/accessory_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+accessory_id = "bow_red"
+display_name = "Red Bow"
+category = "head"
+visual_reference = "res://data/accessories.json#bow_red"
+compatible_socket = "hat"
+source_companion_id = "companion_sandy"
+source_island_id = "beach"

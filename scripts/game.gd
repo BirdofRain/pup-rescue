@@ -6,6 +6,7 @@ extends Node3D
 @export var debug_enabled: bool = false
 @export var target_update_threshold: float = 0.10
 @export var randomize_each_load: bool = true
+@export var island_pup_debug: bool = false
 @export var pickup_radius: float = 0.6
 @export var door_unlock_radius: float = 1.1
 @export var speed_boost_multiplier: float = 1.55
@@ -38,6 +39,12 @@ const LevelGeneratorScript := preload("res://scripts/level_generator.gd")
 const PlayerInputControllerScript := preload("res://scripts/player_input_controller.gd")
 const TouchControlConfigScript := preload("res://scripts/touch_control_config.gd")
 const SafeButtonScript := preload("res://scripts/safe_button.gd")
+const IslandCatalogScript := preload("res://scripts/island_catalog.gd")
+const SpecialPupScript := preload("res://scripts/special_pup.gd")
+const ProgressionRegistryScript := preload("res://scripts/progression/progression_registry.gd")
+const CompanionUnlockPanelScript := preload("res://scripts/companion_unlock_panel.gd")
+const SpecialPupFoundPanelScript := preload("res://scripts/special_pup_found_panel.gd")
+const PuppySessionTrackerScript := preload("res://scripts/puppy_session_tracker.gd")
 const PAUSE_TOUCH_LABELS := ["Tap", "Joystick", "Both", "Off"]
 const LAYER_PLAYER := 2
 
@@ -45,6 +52,22 @@ var cam: Camera3D
 var builder: MazeBuilder
 var run_seed: int = 0
 var current_level: int = 0
+var play_island_id: String = ""
+var play_local_level: int = 0
+var play_replay: bool = false
+var hidden_pup_node: Node3D = null
+var _last_completion_result: Dictionary = {}
+var _pending_had_island_escort: bool = false
+var _escort_joined_this_level_start: bool = false
+var _toast_timer: Timer = null
+var _toast_restore_hint: String = ""
+var _companion_unlock_panel: CompanionUnlockPanel = null
+var _companion_unlock_backdrop: ColorRect = null
+var _special_pup_found_panel: SpecialPupFoundPanel = null
+var _special_pup_found_backdrop: ColorRect = null
+var _pending_after_companion_celebration: Callable = Callable()
+var _special_pup_rescued_this_run: bool = false
+var _session: PuppySessionTracker = PuppySessionTrackerScript.new()
 
 var has_key: bool = false
 var key_node: Node3D = null
@@ -68,8 +91,6 @@ var follower_squad: FollowerSquad = null
 var rescue_room_pups: Array[Node3D] = []
 var rescue_room_root: Node3D = null
 var footprint_trail: Node3D = null
-
-var rescued_this_level: int = 0
 
 var speed_nodes: Array[Node3D] = []
 var double_boost_nodes: Array[Node3D] = []
@@ -140,7 +161,24 @@ func _ready() -> void:
 	footprint_trail.name = "FootprintTrail"
 	$World.add_child(footprint_trail)
 	set_physics_process(true)
-	load_level(_save.current_level)
+	_sync_play_context_from_save()
+	load_level(_resolve_load_level_index())
+
+
+func _sync_play_context_from_save() -> void:
+	if test_mode or _save.boot_test_mode:
+		return
+	if _save.play_island_id == "":
+		_save.set_play_target(_save.current_island_id, _save.current_local_level, false)
+	play_island_id = _save.get_play_island_id()
+	play_local_level = _save.get_play_local_level()
+	play_replay = _save.play_replay
+
+
+func _resolve_load_level_index() -> int:
+	if test_mode or _save.boot_test_mode:
+		return 0
+	return _save.resolve_global_level_index(play_island_id, play_local_level)
 
 
 func _apply_boot_settings() -> void:
@@ -156,8 +194,12 @@ func _apply_boot_settings() -> void:
 func load_level(level_index: int) -> void:
 	current_level = level_index
 	_save.current_level = level_index
+	play_island_id = _save.get_play_island_id()
+	play_local_level = _save.get_play_local_level()
+	play_replay = _save.play_replay
 	level_won = false
 	_clear_runtime_pickups()
+	_clear_hidden_pup()
 
 	if _save.boot_new_game or _save.boot_test_mode:
 		run_squad_bonus = 0
@@ -174,7 +216,11 @@ func load_level(level_index: int) -> void:
 	var ts: float = builder.tile_size
 	fit_floor_to_level(lines, ts)
 
-	var info := builder.build_from_lines(lines, maze_root, level_index)
+	var wall_palette: int = -1
+	if not test_mode and play_island_id != "":
+		var island_def: Dictionary = IslandCatalogScript.get_island(play_island_id)
+		wall_palette = int(island_def.get("wall_palette_index", -1))
+	var info := builder.build_from_lines(lines, maze_root, level_index, wall_palette)
 
 	if auto_fit_camera_on_load and cam_fitter != null:
 		cam_fitter.set_fit_target(info["center"], info["half_extents"], test_mode)
@@ -184,7 +230,8 @@ func load_level(level_index: int) -> void:
 	pen_opened = false
 	has_pen = info.get("pen_gate") is Vector3
 	pen_center = _info_vec3(info, "pen_center")
-	rescued_this_level = 0
+	_session.reset_for_level()
+	_escort_joined_this_level_start = false
 	coins_this_level = 0
 	_level_coin_awarded = false
 	ultra_buffs.clear()
@@ -232,6 +279,9 @@ func load_level(level_index: int) -> void:
 		follower_squad.max_followers = _compute_max_followers()
 		follower_squad.set_snap_mode(_save.get_snap_mode())
 
+	_setup_permanent_companion(info)
+	_setup_island_special_pup(info, lines, ts)
+
 	_hide_win_panel()
 	_hide_pause_menu()
 	_update_level_label()
@@ -247,6 +297,11 @@ func load_level(level_index: int) -> void:
 		_set_hint("Find the key, then optionally visit the side rescue room!")
 	else:
 		_set_hint("Find the key, open the door, reach the exit.")
+	_apply_island_level_hint()
+	if _escort_joined_this_level_start and play_island_id != "":
+		var pup_def: Dictionary = IslandCatalogScript.get_special_pup(play_island_id)
+		var join_name: String = str(pup_def.get("name", "Special pup"))
+		_show_toast("%s is joining this rescue!" % join_name)
 	_update_coins_label()
 	_update_key_status()
 
@@ -266,7 +321,12 @@ func _physics_process(delta: float) -> void:
 	_update_coins_label()
 	_try_unlock_door_near_puppy()
 	_try_open_pen_near_puppy()
-	if follower_squad != null and follower_squad.is_active():
+	_try_claim_hidden_pup()
+	if follower_squad != null and (
+		follower_squad.is_active()
+		or follower_squad.has_escort()
+		or follower_squad.has_permanent_companion()
+	):
 		var ultra_mult: float = ultra_buffs.follower_speed_mult()
 		follower_squad.tick(
 			delta,
@@ -287,6 +347,12 @@ func _update_level_label() -> void:
 	if level_label == null:
 		return
 	var name := "Test maze" if test_mode else "Level %d" % (current_level + 1)
+	if not test_mode and play_island_id != "":
+		var island_def: Dictionary = IslandCatalogScript.get_island(play_island_id)
+		var island_name: String = str(island_def.get("name", play_island_id))
+		name = "%s %d/%d" % [island_name, play_local_level + 1, IslandCatalogScript.level_count(play_island_id)]
+		if play_replay:
+			name += " (replay)"
 	var leader := _save.get_pup_name()
 	var mode := DifficultyConfigScript.mode_label(_save.get_difficulty_mode())
 	level_label.text = "%s  |  %s  |  %s  |  Rescued: %d" % [name, mode, leader, _save.total_rescued]
@@ -424,7 +490,7 @@ func _award_level_coins() -> Dictionary:
 	breakdown["complete"] = base
 	total += base
 	var per_rescue: int = ProgressionConfigScript.COINS_PER_RESCUE + int(_save.get_upgrade_value("coin_per_rescue", 0.0))
-	var rescue_coins: int = rescued_this_level * per_rescue
+	var rescue_coins: int = _temporary_rescues_this_level() * per_rescue
 	breakdown["rescues"] = rescue_coins
 	total += rescue_coins
 	breakdown["pickups"] = coins_this_level
@@ -1096,6 +1162,300 @@ func _follower_floor_y() -> float:
 	return floor_y
 
 
+func _temporary_rescues_this_level() -> int:
+	return _session.temporary_rescues_this_level
+
+
+func _sync_session_rescue_count() -> void:
+	if follower_squad != null:
+		_session.sync_temporary_rescue_count_from_squad(follower_squad)
+
+
+func _validate_session_tracking(context: String) -> void:
+	if follower_squad == null:
+		return
+	_sync_session_rescue_count()
+	var errors: PackedStringArray = _session.validate_no_double_count(follower_squad)
+	if errors.is_empty():
+		return
+	for err: String in errors:
+		push_warning("[%s] %s" % [context, err])
+		if debug_enabled or island_pup_debug:
+			_pup_debug("SESSION VALIDATION: %s" % err)
+
+
+func _pup_debug(message: String) -> void:
+	if island_pup_debug:
+		print("[IslandPup] ", message)
+
+
+func _clear_hidden_pup() -> void:
+	if hidden_pup_node != null and is_instance_valid(hidden_pup_node):
+		hidden_pup_node.queue_free()
+	hidden_pup_node = null
+
+
+func _apply_island_level_hint() -> void:
+	if test_mode or play_island_id == "":
+		return
+	var pup_def: Dictionary = IslandCatalogScript.get_special_pup(play_island_id)
+	if pup_def.is_empty():
+		return
+	var pup_name: String = str(pup_def.get("name", "Special pup"))
+	if _save.is_special_pup_found(play_island_id):
+		if _had_home_island_pup_present():
+			if _save.is_island_companion_unlocked(play_island_id):
+				_set_hint("Bring your companion to earn any missing escort badges!")
+			else:
+				_set_hint("%s is escorting you — finish the level to earn an escort badge!" % pup_name)
+		return
+	var hidden_idx: int = IslandCatalogScript.hidden_level_index(play_island_id)
+	if play_local_level == hidden_idx:
+		_set_hint("Find %s hidden somewhere on this level!" % pup_name)
+
+
+func _island_special_companion_id() -> String:
+	if play_island_id == "":
+		return ""
+	var companion: CompanionDefinition = ProgressionRegistryScript.get_special_companion(play_island_id)
+	return companion.companion_id if companion != null else ""
+
+
+func _setup_permanent_companion(_info: Dictionary) -> void:
+	if test_mode or follower_squad == null:
+		return
+	var selected_id: String = _save.selected_companion_id
+	if selected_id == "" or not _save.owns_companion(selected_id):
+		return
+	var companion: CompanionDefinition = ProgressionRegistryScript.get_companion(selected_id)
+	if companion == null:
+		return
+	var nav: MazeNav = puppy.get_nav() if puppy.has_method("get_nav") else null
+	var floor_y: float = _follower_floor_y()
+	if nav == null:
+		return
+	if follower_squad.has_permanent_companion():
+		return
+	var offset := Vector3(-0.55, 0.0, 0.25)
+	var collar_id: String = _save.get_companion_equipped(selected_id, "collar")
+	var spawned: bool = follower_squad.spawn_permanent_companion(
+		puppy.global_position + offset,
+		nav,
+		floor_y,
+		maze_root,
+		selected_id,
+		companion.coat_index,
+		puppy.global_position,
+		collar_id
+	)
+	if spawned:
+		_session.register_permanent_companion(selected_id)
+		if selected_id == _island_special_companion_id():
+			_session.register_island_escort()
+		var companion_node: Node3D = follower_squad.get_permanent_companion()
+		if companion_node != null and companion_node.has_method("apply_companion_loadout"):
+			companion_node.call("apply_companion_loadout", _save, selected_id)
+		_pup_debug("Permanent companion %s spawned" % selected_id)
+
+
+func _should_spawn_island_escort(special_companion_id: String) -> bool:
+	if play_island_id == "" or not _save.is_special_pup_found(play_island_id):
+		return false
+	if _save.is_island_companion_unlocked(play_island_id):
+		return false
+	if special_companion_id == "":
+		return true
+	if follower_squad.has_permanent_companion():
+		return follower_squad.get_permanent_companion_id() != special_companion_id
+	return true
+
+
+func _setup_island_special_pup(info: Dictionary, lines: PackedStringArray, ts: float) -> void:
+	if test_mode or play_island_id == "" or follower_squad == null:
+		return
+	var pup_def: Dictionary = IslandCatalogScript.get_special_pup(play_island_id)
+	if pup_def.is_empty():
+		return
+	var coat_index: int = int(pup_def.get("coat_index", 0))
+	var pup_name: String = str(pup_def.get("name", "Special pup"))
+	var nav: MazeNav = puppy.get_nav() if puppy.has_method("get_nav") else null
+	var floor_y: float = _follower_floor_y()
+	if nav == null:
+		return
+	if follower_squad.has_island_escort():
+		_pup_debug("Escort already active — skip spawn")
+		return
+	var special_companion_id: String = _island_special_companion_id()
+	if _should_spawn_island_escort(special_companion_id):
+		if _special_pup_rescued_this_run or _save.is_special_pup_found(play_island_id):
+			var hidden_idx: int = IslandCatalogScript.hidden_level_index(play_island_id)
+			if _save.is_special_pup_found(play_island_id) or (
+				play_local_level == hidden_idx and _special_pup_rescued_this_run
+			):
+				_pup_debug("Spawning ISLAND_ESCORT for badge progression")
+				_spawn_island_escort_at_start(nav, floor_y, coat_index, pup_name)
+				return
+	if _save.is_special_pup_found(play_island_id):
+		return
+	var hidden_idx: int = IslandCatalogScript.hidden_level_index(play_island_id)
+	if play_local_level != hidden_idx:
+		return
+	if _special_pup_rescued_this_run:
+		_pup_debug("Discovery level retry — spawning rescued ISLAND_ESCORT at start")
+		_spawn_island_escort_at_start(nav, floor_y, coat_index, pup_name)
+		return
+	var start_pos: Vector3 = info.get("start", puppy.global_position)
+	var exit_pos: Vector3 = _info_vec3(info, "exit")
+	if exit_pos == Vector3.ZERO and exit_node != null:
+		exit_pos = exit_node.global_position
+	var hidden_pos: Vector3 = _pick_hidden_pup_position(lines, ts, start_pos, exit_pos)
+	if hidden_pos == Vector3.ZERO:
+		_pup_debug("No hidden pup position found on discovery level")
+		return
+	var hidden := Node3D.new()
+	hidden.name = "HiddenSpecialPup"
+	hidden.set_script(SpecialPupScript)
+	maze_root.add_child(hidden)
+	hidden.call("setup", hidden_pos, floor_y, coat_index, pup_name)
+	hidden_pup_node = hidden
+	_pup_debug("Spawned discoverable special pup at %s on level %d" % [hidden_pos, play_local_level])
+
+
+func _spawn_island_escort_at_start(nav: MazeNav, floor_y: float, coat_index: int, pup_name: String) -> void:
+	if follower_squad == null or follower_squad.has_island_escort():
+		return
+	var offset := Vector3(-0.8, 0.0, 0.35)
+	var spawned: bool = follower_squad.spawn_island_escort(
+		puppy.global_position + offset,
+		nav,
+		floor_y,
+		maze_root,
+		coat_index,
+		puppy.global_position
+	)
+	if spawned:
+		_session.register_island_escort()
+		_escort_joined_this_level_start = true
+		_pup_debug("%s spawned as ISLAND_ESCORT at level start" % pup_name)
+	else:
+		_pup_debug("Failed to spawn ISLAND_ESCORT for %s" % pup_name)
+
+
+func _pick_hidden_pup_position(
+	lines: PackedStringArray,
+	ts: float,
+	start_pos: Vector3,
+	exit_pos: Vector3
+) -> Vector3:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = run_seed ^ (play_local_level * 9187) ^ 7717
+	var candidates: Array[Vector3] = []
+	for y in range(lines.size()):
+		var line: String = lines[y]
+		for x in range(line.length()):
+			var cp: int = line.unicode_at(x)
+			if cp == 35:
+				continue
+			var pos := Vector3((float(x) + 0.5) * ts, 0.0, (float(y) + 0.5) * ts)
+			if _flat_distance(pos, start_pos) < ts * 3.5:
+				continue
+			candidates.append(pos)
+	if candidates.is_empty():
+		return Vector3.ZERO
+	candidates.sort_custom(func(a: Vector3, b: Vector3) -> bool:
+		var score_a: float = _flat_distance(a, start_pos) + _flat_distance(a, exit_pos) * 0.35
+		var score_b: float = _flat_distance(b, start_pos) + _flat_distance(b, exit_pos) * 0.35
+		return score_a > score_b
+	)
+	var pick: int = mini(rng.randi_range(0, 2), candidates.size() - 1)
+	return candidates[pick]
+
+
+func _try_claim_hidden_pup() -> void:
+	if hidden_pup_node == null or not is_instance_valid(hidden_pup_node):
+		return
+	if not hidden_pup_node.call("try_claim", puppy.global_position):
+		return
+	var pup_def: Dictionary = IslandCatalogScript.get_special_pup(play_island_id)
+	var nav: MazeNav = puppy.get_nav() if puppy.has_method("get_nav") else null
+	if nav == null or follower_squad == null:
+		return
+	if follower_squad.has_island_escort():
+		_pup_debug("Hidden pup claimed but escort already exists — removing marker only")
+		hidden_pup_node.queue_free()
+		hidden_pup_node = null
+		return
+	var coat_index: int = int(pup_def.get("coat_index", 0))
+	var spawn_pos: Vector3 = hidden_pup_node.global_position
+	var spawned: bool = follower_squad.spawn_island_escort(
+		spawn_pos,
+		nav,
+		_follower_floor_y(),
+		maze_root,
+		coat_index,
+		puppy.global_position
+	)
+	if not spawned:
+		_pup_debug("Failed to spawn ISLAND_ESCORT from hidden pup claim")
+		return
+	_session.register_island_escort()
+	_special_pup_rescued_this_run = true
+	hidden_pup_node.queue_free()
+	hidden_pup_node = null
+	var pup_name: String = str(pup_def.get("name", "Special pup"))
+	_pup_debug("%s rescued this run — discovery pending level completion" % pup_name)
+	_set_hint("%s joined you! Finish the level to keep them." % pup_name)
+
+
+func _had_home_island_pup_present() -> bool:
+	if play_island_id == "" or follower_squad == null:
+		return false
+	var special_id: String = _island_special_companion_id()
+	if special_id == "":
+		return follower_squad.has_island_escort()
+	if follower_squad.has_island_escort():
+		return true
+	if follower_squad.has_permanent_companion():
+		return follower_squad.get_permanent_companion_id() == special_id
+	return false
+
+
+func _had_island_escort_this_level() -> bool:
+	return _had_home_island_pup_present()
+
+
+func _would_earn_escort_badge() -> bool:
+	if test_mode or play_island_id == "":
+		return false
+	if not _had_home_island_pup_present():
+		return false
+	if _save.has_escort_badge(play_island_id, play_local_level):
+		return false
+	if _save.is_special_pup_found(play_island_id):
+		return true
+	if _special_pup_rescued_this_run:
+		var hidden_idx: int = IslandCatalogScript.hidden_level_index(play_island_id)
+		return play_local_level == hidden_idx
+	return false
+
+
+func _would_unlock_companion_after_completion() -> bool:
+	if test_mode or play_island_id == "" or _save.is_island_companion_unlocked(play_island_id):
+		return false
+	if not _save.is_special_pup_found(play_island_id):
+		return false
+	if not _would_earn_escort_badge():
+		return false
+	var badges: int = _save.escort_badge_count(play_island_id)
+	var level_count: int = IslandCatalogScript.level_count(play_island_id)
+	return badges + 1 >= level_count
+
+
+func _gather_escort_at_exit(exit_pos: Vector3) -> void:
+	if follower_squad != null:
+		follower_squad.gather_special_followers_to_exit(exit_pos)
+
+
 func _on_door_body_entered(body: Node) -> void:
 	if body == puppy:
 		_try_unlock_door()
@@ -1149,23 +1509,29 @@ func _try_reach_exit() -> void:
 	if has_pen and not pen_opened:
 		_set_hint("Open the rescue room with your key first!")
 		return
-	if follower_squad != null and follower_squad.is_active():
-		var exit_pos: Vector3 = exit_node.global_position if exit_node else Vector3.ZERO
-		if exit_pos == Vector3.ZERO:
-			return
-		if not _near(puppy.global_position, exit_pos):
-			_exit_wait_start_ms = -1
-			return
+	if exit_node == null or puppy == null:
+		return
+	var exit_pos: Vector3 = exit_node.global_position
+	if not _near(puppy.global_position, exit_pos):
+		_exit_wait_start_ms = -1
+		return
+	var waiting_for_temp: bool = (
+		follower_squad != null
+		and follower_squad.is_active()
+		and follower_squad.count_temporary_rescues() > 0
+	)
+	if waiting_for_temp:
 		if _save.has_exit_roundup() and not _exit_roundup_snapped:
 			follower_squad.snap_all_to(exit_pos)
 			_exit_roundup_snapped = true
 			SfxManager.play_roundup()
+			_gather_escort_at_exit(exit_pos)
 			_complete_level()
 			return
 		if _exit_wait_start_ms < 0:
 			_exit_wait_start_ms = Time.get_ticks_msec()
 		var gathered: int = follower_squad.count_escorted_at(exit_pos, puppy.global_position)
-		var total: int = follower_squad.count_followers()
+		var total: int = follower_squad.count_temporary_rescues()
 		var need: int = follower_squad.required_at_exit_count()
 		var elapsed: int = Time.get_ticks_msec() - _exit_wait_start_ms
 		if elapsed < EXIT_GRACE_MS:
@@ -1174,10 +1540,11 @@ func _try_reach_exit() -> void:
 		if gathered < need:
 			_set_hint("Lead pups to the exit! (%d/%d)" % [gathered, need])
 			return
+		_gather_escort_at_exit(exit_pos)
 		_complete_level()
 		return
-	if exit_node != null and _near(puppy.global_position, exit_node.global_position):
-		_complete_level()
+	_gather_escort_at_exit(exit_pos)
+	_complete_level()
 
 
 func info_has_key_door() -> bool:
@@ -1189,8 +1556,9 @@ func _complete_level() -> void:
 		return
 	level_won = true
 	_exit_wait_start_ms = -1
-	if follower_squad != null and follower_squad.is_active():
-		rescued_this_level = maxi(rescued_this_level, follower_squad.count_followers())
+	_sync_session_rescue_count()
+	_validate_session_tracking("level_complete")
+	_pending_had_island_escort = _had_island_escort_this_level()
 	if not _level_coin_awarded:
 		_award_level_coins()
 		_level_coin_awarded = true
@@ -1401,6 +1769,35 @@ func _build_ui() -> void:
 	var menu_win_btn := _win_secondary_button("Menu", func(): _confirm_action("Return to menu?", _on_menu_pressed))
 	win_secondary_btns.add_child(menu_win_btn)
 
+	_companion_unlock_backdrop = _make_modal_backdrop()
+	_companion_unlock_backdrop.visible = false
+	ui_root.add_child(_companion_unlock_backdrop)
+
+	var companion_host := CenterContainer.new()
+	companion_host.set_anchors_preset(Control.PRESET_FULL_RECT)
+	companion_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_root.add_child(companion_host)
+
+	_companion_unlock_panel = CompanionUnlockPanelScript.new()
+	_companion_unlock_panel.name = "CompanionUnlockPanel"
+	_companion_unlock_panel.acknowledged.connect(_on_companion_unlock_acknowledged)
+	_companion_unlock_panel.clubhouse_requested.connect(_on_companion_clubhouse_shortcut)
+	companion_host.add_child(_companion_unlock_panel)
+
+	_special_pup_found_backdrop = _make_modal_backdrop()
+	_special_pup_found_backdrop.visible = false
+	ui_root.add_child(_special_pup_found_backdrop)
+
+	var special_pup_host := CenterContainer.new()
+	special_pup_host.set_anchors_preset(Control.PRESET_FULL_RECT)
+	special_pup_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_root.add_child(special_pup_host)
+
+	_special_pup_found_panel = SpecialPupFoundPanelScript.new()
+	_special_pup_found_panel.name = "SpecialPupFoundPanel"
+	_special_pup_found_panel.dismissed.connect(_on_special_pup_celebration_dismissed)
+	special_pup_host.add_child(_special_pup_found_panel)
+
 	pause_backdrop = _make_modal_backdrop()
 	pause_backdrop.visible = false
 	ui_root.add_child(pause_backdrop)
@@ -1558,6 +1955,8 @@ func _update_key_status() -> void:
 func _update_gameplay_input_block() -> void:
 	var blocked: bool = _paused \
 		or (win_panel != null and win_panel.visible) \
+		or (_companion_unlock_panel != null and _companion_unlock_panel.visible) \
+		or (_special_pup_found_panel != null and _special_pup_found_panel.visible) \
 		or (confirm_dialog != null and confirm_dialog.visible)
 	if player_input != null:
 		player_input.set_gameplay_blocked(blocked)
@@ -1741,9 +2140,10 @@ func _on_test_mode_toggled(on: bool) -> void:
 func _on_menu_pressed() -> void:
 	_hide_pause_menu()
 	_save.current_level = current_level
-	_save.total_rescued += rescued_this_level
-	if _save.progress_features_unlocked():
-		_save.record_progress_snapshot(_current_squad_size(), rescued_this_level)
+	if play_island_id != "":
+		_save.current_island_id = play_island_id
+		_save.current_local_level = play_local_level
+	_save.clear_play_target()
 	_save.save_game()
 	get_tree().change_scene_to_file("res://scenes/Menu.tscn")
 
@@ -1751,15 +2151,15 @@ func _on_menu_pressed() -> void:
 func _on_save_progress_pressed() -> void:
 	if test_mode or not _save.progress_features_unlocked():
 		return
-	_save.save_run_progress(current_level, _current_squad_size(), rescued_this_level)
+	_save.save_run_progress(current_level, _current_squad_size(), _temporary_rescues_this_level())
 	SfxManager.play_shop_buy()
 	_set_hint("Progress saved for %s!" % _save.get_pup_name())
 
 
 func _current_squad_size() -> int:
-	if follower_squad == null or not follower_squad.is_active():
+	if follower_squad == null:
 		return 0
-	return follower_squad.count_followers()
+	return follower_squad.count_session_rescue_points()
 
 
 func _update_progress_ui() -> void:
@@ -1768,8 +2168,118 @@ func _update_progress_ui() -> void:
 
 
 func _on_next_level_pressed() -> void:
-	_save.record_level_complete(rescued_this_level, _current_squad_size())
-	load_level(_save.current_level)
+	var commit_discovery := false
+	if play_island_id != "" and _special_pup_rescued_this_run and not _save.is_special_pup_found(play_island_id):
+		var hidden_idx: int = IslandCatalogScript.hidden_level_index(play_island_id)
+		if play_local_level == hidden_idx:
+			commit_discovery = true
+			_pup_debug("Committing special pup discovery on level %d" % play_local_level)
+	_last_completion_result = _save.record_level_complete_with_escort(
+		_temporary_rescues_this_level(),
+		_current_squad_size(),
+		_pending_had_island_escort,
+		commit_discovery
+	)
+	_special_pup_rescued_this_run = false
+	_pending_had_island_escort = false
+	if bool(_last_completion_result.get("pup_found")):
+		_show_special_pup_found_celebration()
+		return
+	_continue_after_level_rewards()
+
+
+func _continue_after_level_rewards() -> void:
+	var unlocked_id: String = str(_last_completion_result.get("unlocked_companion_id", ""))
+	if (
+		bool(_last_completion_result.get("companion_newly_unlocked", false))
+		and unlocked_id != ""
+		and _save.should_show_companion_celebration(unlocked_id)
+	):
+		_pending_after_companion_celebration = Callable(self, "_continue_after_level_complete")
+		_show_companion_unlock_celebration(unlocked_id)
+		return
+	_continue_after_level_complete()
+
+
+func _show_special_pup_found_celebration() -> void:
+	if _special_pup_found_panel == null or play_island_id == "":
+		_continue_after_level_rewards()
+		return
+	_hide_win_panel()
+	var companion: CompanionDefinition = ProgressionRegistryScript.get_special_companion(play_island_id)
+	var pup_name: String = companion.default_name if companion else "Special pup"
+	var coat: int = companion.coat_index if companion else 0
+	if _special_pup_found_backdrop:
+		_special_pup_found_backdrop.visible = true
+	_special_pup_found_panel.show_discovery(pup_name, coat)
+	SfxManager.play_win()
+	_update_gameplay_input_block()
+
+
+func _on_special_pup_celebration_dismissed() -> void:
+	_save.acknowledge_special_pup_celebration(play_island_id)
+	if _special_pup_found_backdrop:
+		_special_pup_found_backdrop.visible = false
+	if _special_pup_found_panel:
+		_special_pup_found_panel.hide_feedback()
+	_update_gameplay_input_block()
+	_continue_after_level_rewards()
+
+
+func _on_companion_clubhouse_shortcut(companion_id: String) -> void:
+	_save.acknowledge_companion_unlock(companion_id)
+	if _companion_unlock_backdrop:
+		_companion_unlock_backdrop.visible = false
+	if _companion_unlock_panel:
+		_companion_unlock_panel.hide_panel()
+	_update_gameplay_input_block()
+	_save.set_clubhouse_focus(companion_id)
+	get_tree().change_scene_to_file("res://scenes/PuppyClubhouse.tscn")
+
+
+func _continue_after_level_complete() -> void:
+	if test_mode:
+		load_level(current_level)
+		return
+	if play_replay or not bool(_last_completion_result.get("advanced", false)):
+		get_tree().change_scene_to_file("res://scenes/IslandMap.tscn")
+		return
+	var island_id: String = _save.get_play_island_id()
+	var next_local: int = _save.get_play_local_level()
+	var count: int = IslandCatalogScript.level_count(island_id)
+	if next_local >= count:
+		get_tree().change_scene_to_file("res://scenes/IslandMap.tscn")
+		return
+	_save.set_play_target(island_id, next_local, false)
+	play_island_id = island_id
+	play_local_level = next_local
+	play_replay = false
+	load_level(_save.resolve_global_level_index(island_id, next_local))
+
+
+func _show_companion_unlock_celebration(companion_id: String) -> void:
+	if _companion_unlock_panel == null:
+		_continue_after_level_complete()
+		return
+	_hide_win_panel()
+	if _companion_unlock_backdrop:
+		_companion_unlock_backdrop.visible = true
+	_companion_unlock_panel.show_unlock(companion_id, _save)
+	SfxManager.play_win()
+	_update_gameplay_input_block()
+
+
+func _on_companion_unlock_acknowledged(companion_id: String) -> void:
+	_save.acknowledge_companion_unlock(companion_id)
+	if _companion_unlock_backdrop:
+		_companion_unlock_backdrop.visible = false
+	if _companion_unlock_panel:
+		_companion_unlock_panel.hide_panel()
+	_update_gameplay_input_block()
+	var next_step: Callable = _pending_after_companion_celebration
+	_pending_after_companion_celebration = Callable()
+	if next_step.is_valid():
+		next_step.call()
 
 
 func _show_win_panel() -> void:
@@ -1781,12 +2291,52 @@ func _show_win_panel() -> void:
 		win_panel.visible = true
 	_update_gameplay_input_block()
 	if win_label:
-		var rescue_line := ""
-		if rescued_this_level > 0:
-			rescue_line = "\nRescued %d pups from the rescue room" % rescued_this_level
-		win_label.text = "Level %d complete!%s\n%s — %d total rescued" % [
-			current_level + 1, rescue_line, _save.get_pup_name(), _save.total_rescued
+		var badge_already: bool = (
+			play_island_id != ""
+			and _save.has_escort_badge(play_island_id, play_local_level)
+		)
+		var report: Dictionary = _session.build_completion_report(
+			_save,
+			_had_home_island_pup_present(),
+			_would_earn_escort_badge(),
+			badge_already
+		)
+		var session_summary: String = _session.format_completion_summary(report)
+		var escort_line := ""
+		if play_island_id != "":
+			var pup_def: Dictionary = IslandCatalogScript.get_special_pup(play_island_id)
+			var pup_name: String = str(pup_def.get("name", "Special pup"))
+			if _special_pup_rescued_this_run and not _save.is_special_pup_found(play_island_id):
+				escort_line = "\n%s will join your island adventures!" % pup_name
+			if _would_unlock_companion_after_completion():
+				escort_line += "\nCompanion Unlocked!"
+		var level_title := "Level %d complete!" % (current_level + 1)
+		if not test_mode and play_island_id != "":
+			var island_def: Dictionary = IslandCatalogScript.get_island(play_island_id)
+			level_title = "%s level %d complete!" % [
+				str(island_def.get("name", play_island_id)),
+				play_local_level + 1,
+			]
+		win_label.text = "%s\n%s%s\n%s — %d total rescued" % [
+			level_title,
+			session_summary,
+			escort_line,
+			_save.get_pup_name(),
+			_save.total_rescued,
 		]
+	if next_btn:
+		if test_mode:
+			next_btn.text = "Next Level  →"
+		elif play_replay:
+			next_btn.text = "Back to Levels"
+		elif play_island_id != "":
+			var count: int = IslandCatalogScript.level_count(play_island_id)
+			if play_local_level + 1 < count:
+				next_btn.text = "Next Level  →"
+			else:
+				next_btn.text = "Back to Levels"
+		else:
+			next_btn.text = "Next Level  →"
 	if shop_panel:
 		shop_panel.set_summary("Spend Treat Coins below!", _last_coin_summary)
 		shop_panel.refresh()
@@ -1807,7 +2357,30 @@ func _set_hint(msg: String) -> void:
 		hint_label.text = msg
 
 
+func _show_toast(message: String, duration_sec: float = 3.5) -> void:
+	if hint_label == null:
+		return
+	if _toast_timer == null:
+		_toast_timer = Timer.new()
+		_toast_timer.one_shot = true
+		_toast_timer.name = "HintToastTimer"
+		add_child(_toast_timer)
+		_toast_timer.timeout.connect(_on_toast_timeout)
+	if not _toast_timer.is_stopped():
+		_toast_timer.stop()
+	else:
+		_toast_restore_hint = hint_label.text
+	hint_label.text = message
+	_toast_timer.start(duration_sec)
+
+
+func _on_toast_timeout() -> void:
+	if hint_label:
+		hint_label.text = _toast_restore_hint
+
+
 func _clear_runtime_pickups() -> void:
+	_clear_hidden_pup()
 	if footprint_trail != null:
 		footprint_trail.clear()
 	_clear_waiting_pups_in_room()
@@ -1978,7 +2551,8 @@ func _open_pen() -> void:
 			$World/ActorsRoot,
 			puppy.global_position
 		)
-		rescued_this_level = spawned
+		_session.record_temporary_rescues_spawned(spawned)
+		_validate_session_tracking("pen_release")
 		_apply_follower_collar()
 		_update_level_label()
 		SfxManager.play_rescue()

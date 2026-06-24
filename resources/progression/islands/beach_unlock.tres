@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="UnlockRequirement" load_steps=2 format=3 uid="uid://beach_unlock_req"]
+
+[ext_resource type="Script" path="res://scripts/progression/unlock_requirement.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+required_island_id = ""
+required_completed_level_id = ""
+required_escort_badge_count = 0

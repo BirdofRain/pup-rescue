@@ -50,8 +50,14 @@ func clear_children(root: Node) -> void:
 	for c in root.get_children():
 		c.queue_free()
 
-func build_from_lines(lines: PackedStringArray, maze_root: Node3D, level_index: int = 0) -> Dictionary:
-	_wall_color = WALL_PALETTE[level_index % WALL_PALETTE.size()]
+func build_from_lines(
+	lines: PackedStringArray,
+	maze_root: Node3D,
+	level_index: int = 0,
+	wall_palette_index: int = -1
+) -> Dictionary:
+	var palette_idx: int = wall_palette_index if wall_palette_index >= 0 else level_index
+	_wall_color = WALL_PALETTE[palette_idx % WALL_PALETTE.size()]
 	var info := {
 		"start": Vector3.ZERO,
 		"exit": null,

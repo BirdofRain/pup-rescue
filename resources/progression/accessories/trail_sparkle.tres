@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="AccessoryDefinition" load_steps=2 format=3 uid="uid://accessory_trail_sparkle"]
+
+[ext_resource type="Script" path="res://scripts/progression/accessory_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+accessory_id = "trail_sparkle"
+display_name = "Sparkle Trail"
+category = "trail"
+visual_reference = "res://data/accessories.json#trail_sparkle"
+compatible_socket = "trail"
+source_companion_id = "companion_sandy"
+source_island_id = "beach"

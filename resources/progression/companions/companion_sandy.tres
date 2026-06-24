@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="CompanionDefinition" load_steps=2 format=3 uid="uid://companion_sandy"]
+
+[ext_resource type="Script" path="res://scripts/progression/companion_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+companion_id = "companion_sandy"
+default_name = "Sandy"
+home_island_id = "beach"
+visual_scene_path = "res://scenes/PuppySmall.tscn"
+coat_index = 0
+pattern_id = "golden_retriever"
+starter_accessory_ids = PackedStringArray("bandana_green", "bow_red", "tail_ribbon", "trail_sparkle", "aura_glow", "tag_shared")
+portrait_path = ""

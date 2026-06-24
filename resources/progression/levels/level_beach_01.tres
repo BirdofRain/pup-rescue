@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="LevelDefinition" load_steps=2 format=3 uid="uid://level_beach_01"]
+
+[ext_resource type="Script" path="res://scripts/progression/level_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+level_id = "level_beach_01"
+display_name = "Sandy Shore"
+island_id = "beach"
+order_index = 0
+scene_path = "res://scenes/Game.tscn"
+global_procedural_index = 0
+allows_special_pup_discovery = false
+reward_coin_bonus = 0
+reward_metadata = {}
