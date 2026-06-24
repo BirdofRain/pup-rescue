@@ -29,7 +29,7 @@ static func normalize(raw: Dictionary) -> Dictionary:
 static func migrate_legacy_entry(
 	island_id: String,
 	raw: Dictionary,
-	registry: ProgressionRegistry
+	registry: Variant
 ) -> Dictionary:
 	if raw.has("completed_level_ids") or raw.has("escort_badge_level_ids"):
 		return normalize(raw)
@@ -95,7 +95,7 @@ static func is_level_completed_by_order(
 	progress: Dictionary,
 	island_id: String,
 	local_level: int,
-	registry: ProgressionRegistry
+	registry: Variant
 ) -> bool:
 	var level_id: String = registry.level_id_for_order(island_id, local_level)
 	if level_id == "":
@@ -107,7 +107,7 @@ static func has_escort_badge_by_order(
 	progress: Dictionary,
 	island_id: String,
 	local_level: int,
-	registry: ProgressionRegistry
+	registry: Variant
 ) -> bool:
 	var level_id: String = registry.level_id_for_order(island_id, local_level)
 	if level_id == "":
