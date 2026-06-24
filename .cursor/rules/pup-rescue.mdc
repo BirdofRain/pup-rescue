@@ -1,0 +1,50 @@
+---
+description: Pup Rescue (Godot 4) — agent guardrails for safe, additive changes
+alwaysApply: true
+---
+
+# Pup Rescue — Agent Rules
+
+Pup Rescue is an existing **Godot 4** game. Treat this as a mature codebase to extend
+carefully, not a greenfield project to rebuild.
+
+## Golden rules
+
+- **Do not rewrite the whole project.** No mass refactors, no sweeping renames, no
+  "clean rewrites" of working systems.
+- **Make small, additive, reviewable changes.** Prefer the minimal edit that satisfies
+  the request. Match existing style and patterns.
+- **Inspect before editing.** Read the relevant scenes/scripts/resources and understand
+  how they connect before changing anything.
+- **Do not delete files** or remove assets unless the user explicitly asks.
+
+## Must preserve (do not break)
+
+- **Player movement** (`scripts/puppy_controller.gd`, `scripts/player_input_controller.gd`)
+- **Rescue logic and followers** (`scripts/follower_*.gd`, `scripts/follower_squad.gd`)
+- **Keys, pen gate / door, and exits** (level/win flow in `scripts/game.gd`)
+- **Save data** (`scripts/save_game.gd`, `user://save.json`)
+- **UI node references** and signal connections in `.tscn` scenes
+- **Scene transitions** (Menu ↔ Game ↔ progression scenes)
+
+## Progression & saves
+
+- **Use stable IDs** for progression systems (islands, levels, companions, accessories).
+  Never renumber, reuse, or repurpose existing IDs.
+- **Avoid breaking existing saves.** If the save schema must change, add migrations and
+  safe defaults so old `user://save.json` files still load.
+
+## Workflow
+
+1. Inspect the relevant files first.
+2. Make the smallest change that works; keep gameplay logic intact unless the task is
+   explicitly about gameplay.
+3. After editing, **report the list of changed files** and the **manual test steps**
+   to verify (see the checklist in `README.md`).
+4. Do not create or push to GitHub repositories unless explicitly asked.
+
+## Repo hygiene
+
+- Keep Godot caches out of version control (`.godot/`, `.import/`). They are gitignored.
+- Commit `*.import` metadata alongside their assets (required by Godot 4).
+- Binary assets are tracked via Git LFS (see `.gitattributes`).
