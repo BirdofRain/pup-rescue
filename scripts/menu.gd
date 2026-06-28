@@ -468,7 +468,7 @@ func _build_companion_buttons() -> void:
 	_companion_flow.name = "CompanionFlow"
 	_companion_flow.add_theme_constant_override("h_separation", 8)
 	_companion_flow.add_theme_constant_override("v_separation", 8)
-	_companion_flow.alignment = BoxContainer.ALIGNMENT_CENTER
+	_companion_flow.alignment = FlowContainer.ALIGNMENT_CENTER
 	vbox.add_child(_companion_flow)
 	vbox.move_child(_companion_flow, insert_idx)
 	_refresh_companion_buttons()
