@@ -45,6 +45,8 @@ func _apply_side_anchors() -> void:
 
 
 func _layout_centers() -> void:
+	if size.x < 1.0 or size.y < 1.0:
+		return
 	_base_center = size * 0.5
 	if not _dragging:
 		_thumb_center = _base_center
@@ -101,7 +103,7 @@ func _gui_input(event: InputEvent) -> void:
 				return
 			_touch_id = touch.index
 			_dragging = true
-			_update_from_global(touch.position)
+			_update_from_local(_event_local_position(event))
 			accept_event()
 		elif _dragging and touch.index == _touch_id:
 			reset()
@@ -109,7 +111,7 @@ func _gui_input(event: InputEvent) -> void:
 	elif event is InputEventScreenDrag:
 		var drag := event as InputEventScreenDrag
 		if _dragging and drag.index == _touch_id:
-			_update_from_global(drag.position)
+			_update_from_local(_event_local_position(event))
 			accept_event()
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
@@ -120,19 +122,32 @@ func _gui_input(event: InputEvent) -> void:
 				return
 			_touch_id = 0
 			_dragging = true
-			_update_from_global(mb.position)
+			_update_from_local(_event_local_position(event))
 			accept_event()
 		elif _dragging and _touch_id == 0:
 			reset()
 			accept_event()
 	elif event is InputEventMouseMotion:
 		if _dragging and _touch_id == 0 and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-			_update_from_global(event.position)
+			_update_from_local(_event_local_position(event))
 			accept_event()
 
 
-func _update_from_global(global_pos: Vector2) -> void:
-	var local_pos: Vector2 = get_global_transform().affine_inverse() * global_pos
+func _event_local_position(event: InputEvent) -> Vector2:
+	# _gui_input delivers positions in this Control's local space — do not re-transform.
+	var local_event := make_input_local(event)
+	if local_event is InputEventMouse:
+		return (local_event as InputEventMouse).position
+	if local_event is InputEventScreenTouch:
+		return (local_event as InputEventScreenTouch).position
+	if local_event is InputEventScreenDrag:
+		return (local_event as InputEventScreenDrag).position
+	return Vector2.ZERO
+
+
+func _update_from_local(local_pos: Vector2) -> void:
+	if _base_center == Vector2.ZERO and size.x >= 1.0 and size.y >= 1.0:
+		_layout_centers()
 	var delta: Vector2 = local_pos - _base_center
 	var max_dist: float = maxf(max_drag_distance, 8.0)
 	if delta.length() > max_dist:
