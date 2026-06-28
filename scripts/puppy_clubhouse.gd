@@ -199,7 +199,6 @@ func _style_button(btn: Button, bg: Color) -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_SIZE_CHANGED:
-		_apply_layout_for_viewport()
 		_apply_slot_columns()
 
 
