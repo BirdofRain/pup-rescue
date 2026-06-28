@@ -85,8 +85,8 @@ func _relayout() -> void:
 	for i in range(_nodes.size()):
 		var node: IslandRouteNode = _nodes[i]
 		var center: Vector2 = _positions[i]
-		var size: Vector2 = node.custom_minimum_size
-		node.position = center - size * 0.5
+		var board_size: Vector2 = node.custom_minimum_size
+		node.position = center - board_size * 0.5
 	queue_redraw()
 
 

@@ -43,19 +43,19 @@ func _refresh_accessory_icons(companion: CompanionDefinition) -> void:
 		var entry: Dictionary = AccessoryCatalogScript.get_entry(accessory_id)
 		if entry.is_empty():
 			continue
-		var wrap := VBoxContainer.new()
-		wrap.add_theme_constant_override("separation", 2)
+		var wrapped_label := VBoxContainer.new()
+		wrapped_label.add_theme_constant_override("separation", 2)
 		var icon := UiItemIconScript.new()
 		icon.custom_minimum_size = Vector2(52, 52)
 		icon.setup_accessory(entry)
-		wrap.add_child(icon)
+		wrapped_label.add_child(icon)
 		var lbl := Label.new()
 		lbl.text = AccessoryCatalogScript.display_name_for(accessory_id)
 		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		lbl.add_theme_font_size_override("font_size", 9)
 		lbl.add_theme_color_override("font_color", MUTED)
-		wrap.add_child(lbl)
-		_accessory_row.add_child(wrap)
+		wrapped_label.add_child(lbl)
+		_accessory_row.add_child(wrapped_label)
 
 
 func hide_panel() -> void:

@@ -70,8 +70,8 @@ func _refresh() -> void:
 
 
 func _wardrobe_tile(entry: Variant, slot: String, equipped: bool) -> Control:
-	var wrap := VBoxContainer.new()
-	wrap.add_theme_constant_override("separation", 2)
+	var wrapped_label := VBoxContainer.new()
+	wrapped_label.add_theme_constant_override("separation", 2)
 	var btn := Button.new()
 	btn.custom_minimum_size = Vector2(72, 72)
 	var item_name: String = "None" if entry == null else str((entry as Dictionary).get("name", ""))
@@ -114,7 +114,7 @@ func _wardrobe_tile(entry: Variant, slot: String, equipped: bool) -> Control:
 		check.offset_right = -4
 		check.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		btn.add_child(check)
-	wrap.add_child(btn)
+	wrapped_label.add_child(btn)
 	var lbl := Label.new()
 	lbl.text = item_name
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -122,8 +122,8 @@ func _wardrobe_tile(entry: Variant, slot: String, equipped: bool) -> Control:
 	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl.add_theme_font_size_override("font_size", 10)
 	lbl.add_theme_color_override("font_color", MENU_TEXT)
-	wrap.add_child(lbl)
-	return wrap
+	wrapped_label.add_child(lbl)
+	return wrapped_label
 
 
 func _style_primary_button(btn: Button) -> void:
