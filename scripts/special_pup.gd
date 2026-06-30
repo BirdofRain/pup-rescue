@@ -54,17 +54,21 @@ func _process(delta: float) -> void:
 
 
 func try_claim(player_pos: Vector3) -> bool:
+	if not can_claim(player_pos):
+		return false
+	_claimed = true
+	visible = false
+	return true
+
+
+func can_claim(player_pos: Vector3) -> bool:
 	if _claimed:
 		return false
 	var flat := global_position
 	flat.y = 0.0
 	var player_flat := player_pos
 	player_flat.y = 0.0
-	if flat.distance_to(player_flat) > pickup_radius:
-		return false
-	_claimed = true
-	visible = false
-	return true
+	return flat.distance_to(player_flat) <= pickup_radius
 
 
 func get_pup_name() -> String:

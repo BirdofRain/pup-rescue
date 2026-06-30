@@ -300,3 +300,110 @@ func _nearest_walkable_tile(world_pos: Vector3) -> Vector2i:
 				if _is_cell_reachable(nx, nz):
 					return Vector2i(nx, nz)
 	return Vector2i(tx, tz)
+
+
+func is_spawn_cell_walkable(cell_x: int, cell_z: int, allow_sealed_pen_interior: bool = false) -> bool:
+	if cell_x < 0 or cell_x >= cols or cell_z < 0 or cell_z >= rows:
+		return false
+	var key := "%d,%d" % [cell_x, cell_z]
+	if _pen_sealed and _sealed_cells.has(key) and not allow_sealed_pen_interior:
+		return false
+	if _is_rescue_door_cell(cell_x, cell_z) and not rescue_door_unlocked:
+		return false
+	if not is_code_walkable(lines[cell_z].unicode_at(cell_x)):
+		return false
+	return is_position_walkable(tile_center(cell_x, cell_z, 0.0))
+
+
+func can_reach_spawn_cell(from_world: Vector3, cell_x: int, cell_z: int, floor_y: float) -> bool:
+	if not is_spawn_cell_walkable(cell_x, cell_z, false):
+		return false
+	if from_world == Vector3.ZERO:
+		return true
+	var goal := tile_center(cell_x, cell_z, floor_y)
+	var path: Array[Vector3] = find_path(from_world, goal, floor_y)
+	if path.is_empty():
+		return false
+	var last: Vector3 = path[path.size() - 1]
+	return Vector2(last.x, last.z).distance_to(Vector2(goal.x, goal.z)) <= tile_size * 0.9
+
+
+func find_safe_spawn_position(
+	requested: Vector3,
+	floor_y: float,
+	reach_from: Vector3 = Vector3.ZERO,
+	allow_sealed_pen_interior: bool = false,
+	require_reachable: bool = true
+) -> Dictionary:
+	var origin := Vector2i(tile_x(requested.x), tile_z(requested.z))
+	var best := _search_nearest_spawn_cell(
+		origin,
+		floor_y,
+		reach_from,
+		allow_sealed_pen_interior,
+		require_reachable
+	)
+	if best == Vector2i(-999, -999):
+		var fallback := clamp_to_walkable(requested, floor_y)
+		fallback.y = floor_y
+		return {
+			"position": fallback,
+			"corrected": true,
+			"reason": "no_valid_cell",
+			"requested": requested,
+			"cell": origin,
+		}
+	var pos := tile_center(best.x, best.y, floor_y)
+	var corrected: bool = best != origin
+	if not corrected:
+		corrected = Vector2(pos.x, pos.z).distance_to(Vector2(requested.x, requested.z)) > tile_size * 0.25
+	var reason := ""
+	if corrected:
+		if not is_spawn_cell_walkable(origin.x, origin.y, allow_sealed_pen_interior):
+			reason = "invalid_cell"
+		elif require_reachable and reach_from != Vector3.ZERO \
+			and not can_reach_spawn_cell(reach_from, best.x, best.y, floor_y):
+			reason = "unreachable"
+		else:
+			reason = "blocked_position"
+	return {
+		"position": pos,
+		"corrected": corrected,
+		"reason": reason,
+		"requested": requested,
+		"cell": best,
+	}
+
+
+func _search_nearest_spawn_cell(
+	origin: Vector2i,
+	floor_y: float,
+	reach_from: Vector3,
+	allow_sealed_pen_interior: bool,
+	require_reachable: bool
+) -> Vector2i:
+	if _is_spawn_candidate(origin.x, origin.y, floor_y, reach_from, allow_sealed_pen_interior, require_reachable):
+		return origin
+	for radius in range(1, 10):
+		for dz in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				var nx: int = origin.x + dx
+				var nz: int = origin.y + dz
+				if _is_spawn_candidate(nx, nz, floor_y, reach_from, allow_sealed_pen_interior, require_reachable):
+					return Vector2i(nx, nz)
+	return Vector2i(-999, -999)
+
+
+func _is_spawn_candidate(
+	cell_x: int,
+	cell_z: int,
+	floor_y: float,
+	reach_from: Vector3,
+	allow_sealed_pen_interior: bool,
+	require_reachable: bool
+) -> bool:
+	if not is_spawn_cell_walkable(cell_x, cell_z, allow_sealed_pen_interior):
+		return false
+	if require_reachable and reach_from != Vector3.ZERO:
+		return can_reach_spawn_cell(reach_from, cell_x, cell_z, floor_y)
+	return true
