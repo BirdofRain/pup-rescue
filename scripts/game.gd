@@ -200,6 +200,7 @@ func load_level(level_index: int) -> void:
 	level_won = false
 	_clear_runtime_pickups()
 	_clear_hidden_pup()
+	_special_pup_rescued_this_run = false
 
 	if _save.boot_new_game or _save.boot_test_mode:
 		run_squad_bonus = 0
@@ -280,7 +281,7 @@ func load_level(level_index: int) -> void:
 		follower_squad.set_snap_mode(_save.get_snap_mode())
 
 	_setup_permanent_companion(info)
-	_setup_island_special_pup(info, lines, ts)
+	_setup_island_special_pup(info)
 
 	_hide_win_panel()
 	_hide_pause_menu()
@@ -429,6 +430,18 @@ func _spawn_waiting_pups_in_room(info: Dictionary) -> void:
 	rng.seed = run_seed ^ (current_level * 4423)
 	for i in show_count:
 		var cell_pos: Vector3 = cells[i]
+		var nav: MazeNav = puppy.get_nav() if puppy != null and puppy.has_method("get_nav") else null
+		var start_pos: Vector3 = _info_vec3(info, "start")
+		if nav != null:
+			cell_pos = _resolve_pup_spawn(
+				nav,
+				cell_pos,
+				_follower_floor_y(),
+				start_pos if start_pos != Vector3.ZERO else puppy.global_position,
+				true,
+				false,
+				"rescue_room_marker"
+			)
 		var offset := Vector3(
 			rng.randf_range(-0.12, 0.12),
 			0.0,
@@ -1195,6 +1208,39 @@ func _clear_hidden_pup() -> void:
 	hidden_pup_node = null
 
 
+func _resolve_pup_spawn(
+	nav: MazeNav,
+	requested: Vector3,
+	floor_y: float,
+	reach_from: Vector3,
+	allow_sealed_pen_interior: bool,
+	require_reachable: bool,
+	role_label: String,
+	entity_id: String = ""
+) -> Vector3:
+	var result: Dictionary = nav.find_safe_spawn_position(
+		requested,
+		floor_y,
+		reach_from,
+		allow_sealed_pen_interior,
+		require_reachable
+	)
+	if bool(result.get("corrected", false)) and (island_pup_debug or debug_enabled):
+		push_warning(
+			"Pup spawn corrected [%s] island=%s level=%d id=%s reason=%s requested=%s corrected=%s"
+			% [
+				role_label,
+				play_island_id,
+				play_local_level,
+				entity_id,
+				str(result.get("reason", "")),
+				str(result.get("requested", requested)),
+				str(result.get("position", requested)),
+			]
+		)
+	return result.get("position", requested) as Vector3
+
+
 func _apply_island_level_hint() -> void:
 	if test_mode or play_island_id == "":
 		return
@@ -1237,12 +1283,23 @@ func _setup_permanent_companion(_info: Dictionary) -> void:
 	if follower_squad.has_permanent_companion():
 		return
 	var offset := Vector3(-0.55, 0.0, 0.25)
+	var requested: Vector3 = puppy.global_position + offset
+	var spawn_pos: Vector3 = _resolve_pup_spawn(
+		nav,
+		requested,
+		floor_y,
+		puppy.global_position,
+		false,
+		true,
+		"permanent_companion",
+		selected_id
+	)
 	var collar_id: String = _save.get_companion_equipped(selected_id, "collar")
 	var spawned: bool = follower_squad.spawn_permanent_companion(
-		puppy.global_position + offset,
+		spawn_pos,
 		nav,
 		floor_y,
-		maze_root,
+		$World/ActorsRoot,
 		selected_id,
 		companion.coat_index,
 		puppy.global_position,
@@ -1270,7 +1327,7 @@ func _should_spawn_island_escort(special_companion_id: String) -> bool:
 	return true
 
 
-func _setup_island_special_pup(info: Dictionary, lines: PackedStringArray, ts: float) -> void:
+func _setup_island_special_pup(info: Dictionary) -> void:
 	if test_mode or play_island_id == "" or follower_squad == null:
 		return
 	var pup_def: Dictionary = IslandCatalogScript.get_special_pup(play_island_id)
@@ -1308,7 +1365,7 @@ func _setup_island_special_pup(info: Dictionary, lines: PackedStringArray, ts: f
 	var exit_pos: Vector3 = _info_vec3(info, "exit")
 	if exit_pos == Vector3.ZERO and exit_node != null:
 		exit_pos = exit_node.global_position
-	var hidden_pos: Vector3 = _pick_hidden_pup_position(lines, ts, start_pos, exit_pos)
+	var hidden_pos: Vector3 = _pick_hidden_pup_position(nav, floor_y, start_pos, exit_pos)
 	if hidden_pos == Vector3.ZERO:
 		_pup_debug("No hidden pup position found on discovery level")
 		return
@@ -1325,11 +1382,22 @@ func _spawn_island_escort_at_start(nav: MazeNav, floor_y: float, coat_index: int
 	if follower_squad == null or follower_squad.has_island_escort():
 		return
 	var offset := Vector3(-0.8, 0.0, 0.35)
+	var requested: Vector3 = puppy.global_position + offset
+	var spawn_pos: Vector3 = _resolve_pup_spawn(
+		nav,
+		requested,
+		floor_y,
+		puppy.global_position,
+		false,
+		true,
+		"island_escort",
+		_island_special_companion_id()
+	)
 	var spawned: bool = follower_squad.spawn_island_escort(
-		puppy.global_position + offset,
+		spawn_pos,
 		nav,
 		floor_y,
-		maze_root,
+		$World/ActorsRoot,
 		coat_index,
 		puppy.global_position
 	)
@@ -1342,21 +1410,24 @@ func _spawn_island_escort_at_start(nav: MazeNav, floor_y: float, coat_index: int
 
 
 func _pick_hidden_pup_position(
-	lines: PackedStringArray,
-	ts: float,
+	nav: MazeNav,
+	floor_y: float,
 	start_pos: Vector3,
 	exit_pos: Vector3
 ) -> Vector3:
+	if nav == null or nav.lines.is_empty():
+		return Vector3.ZERO
+	var ts: float = nav.tile_size
 	var rng := RandomNumberGenerator.new()
 	rng.seed = run_seed ^ (play_local_level * 9187) ^ 7717
 	var candidates: Array[Vector3] = []
-	for y in range(lines.size()):
-		var line: String = lines[y]
-		for x in range(line.length()):
-			var cp: int = line.unicode_at(x)
-			if cp == 35:
+	for z in range(nav.rows):
+		for x in range(nav.cols):
+			if not nav.is_spawn_cell_walkable(x, z, false):
 				continue
-			var pos := Vector3((float(x) + 0.5) * ts, 0.0, (float(y) + 0.5) * ts)
+			if not nav.can_reach_spawn_cell(start_pos, x, z, floor_y):
+				continue
+			var pos: Vector3 = nav.tile_center(x, z, floor_y)
 			if _flat_distance(pos, start_pos) < ts * 3.5:
 				continue
 			candidates.append(pos)
@@ -1368,13 +1439,22 @@ func _pick_hidden_pup_position(
 		return score_a > score_b
 	)
 	var pick: int = mini(rng.randi_range(0, 2), candidates.size() - 1)
-	return candidates[pick]
+	return _resolve_pup_spawn(
+		nav,
+		candidates[pick],
+		floor_y,
+		start_pos,
+		false,
+		true,
+		"special_discovery",
+		_island_special_companion_id()
+	)
 
 
 func _try_claim_hidden_pup() -> void:
 	if hidden_pup_node == null or not is_instance_valid(hidden_pup_node):
 		return
-	if not hidden_pup_node.call("try_claim", puppy.global_position):
+	if not hidden_pup_node.call("can_claim", puppy.global_position):
 		return
 	var pup_def: Dictionary = IslandCatalogScript.get_special_pup(play_island_id)
 	var nav: MazeNav = puppy.get_nav() if puppy.has_method("get_nav") else null
@@ -1386,18 +1466,29 @@ func _try_claim_hidden_pup() -> void:
 		hidden_pup_node = null
 		return
 	var coat_index: int = int(pup_def.get("coat_index", 0))
-	var spawn_pos: Vector3 = hidden_pup_node.global_position
+	var requested: Vector3 = hidden_pup_node.global_position
+	var spawn_pos: Vector3 = _resolve_pup_spawn(
+		nav,
+		requested,
+		_follower_floor_y(),
+		puppy.global_position,
+		false,
+		true,
+		"island_escort_claim",
+		_island_special_companion_id()
+	)
 	var spawned: bool = follower_squad.spawn_island_escort(
 		spawn_pos,
 		nav,
 		_follower_floor_y(),
-		maze_root,
+		$World/ActorsRoot,
 		coat_index,
 		puppy.global_position
 	)
 	if not spawned:
 		_pup_debug("Failed to spawn ISLAND_ESCORT from hidden pup claim")
 		return
+	hidden_pup_node.call("try_claim", puppy.global_position)
 	_session.register_island_escort()
 	_special_pup_rescued_this_run = true
 	hidden_pup_node.queue_free()
@@ -2543,9 +2634,22 @@ func _open_pen() -> void:
 				var pos: Vector3 = spawn + offset
 				pos.y = _follower_floor_y()
 				spawn_positions.append(pos)
+		var validated_positions: Array[Vector3] = []
+		for pos: Vector3 in spawn_positions.slice(0, release_count):
+			validated_positions.append(
+				_resolve_pup_spawn(
+					nav,
+					pos,
+					_follower_floor_y(),
+					puppy.global_position,
+					false,
+					true,
+					"temporary_rescue"
+				)
+			)
 		follower_squad.max_followers = _compute_max_followers()
 		var spawned: int = follower_squad.release_pen_followers(
-			spawn_positions.slice(0, release_count),
+			validated_positions,
 			nav,
 			_follower_floor_y(),
 			$World/ActorsRoot,
