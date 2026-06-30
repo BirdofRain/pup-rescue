@@ -134,14 +134,14 @@ func _gui_input(event: InputEvent) -> void:
 
 
 func _event_local_position(event: InputEvent) -> Vector2:
-	# _gui_input delivers positions in this Control's local space — do not re-transform.
-	var local_event := make_input_local(event)
-	if local_event is InputEventMouse:
-		return (local_event as InputEventMouse).position
-	if local_event is InputEventScreenTouch:
-		return (local_event as InputEventScreenTouch).position
-	if local_event is InputEventScreenDrag:
-		return (local_event as InputEventScreenDrag).position
+	# _gui_input already provides positions in this Control's local space.
+	# Re-running make_input_local() mirrors/offsets coordinates (notably on right-side anchors).
+	if event is InputEventMouse:
+		return (event as InputEventMouse).position
+	if event is InputEventScreenTouch:
+		return (event as InputEventScreenTouch).position
+	if event is InputEventScreenDrag:
+		return (event as InputEventScreenDrag).position
 	return Vector2.ZERO
 
 

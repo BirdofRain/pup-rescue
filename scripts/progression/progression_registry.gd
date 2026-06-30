@@ -6,6 +6,30 @@ const LEVELS_DIR := "res://resources/progression/levels/"
 const COMPANIONS_DIR := "res://resources/progression/companions/"
 const ACCESSORIES_DIR := "res://resources/progression/accessories/"
 
+const DIR_MANIFEST: Dictionary = {
+	LEVELS_DIR: [
+		"res://resources/progression/levels/level_beach_01.tres",
+		"res://resources/progression/levels/level_beach_02.tres",
+		"res://resources/progression/levels/level_beach_03.tres",
+		"res://resources/progression/levels/level_beach_04.tres",
+		"res://resources/progression/levels/level_beach_05.tres",
+	],
+	COMPANIONS_DIR: [
+		"res://resources/progression/companions/companion_sandy.tres",
+	],
+	ACCESSORIES_DIR: [
+		"res://resources/progression/accessories/aura_glow.tres",
+		"res://resources/progression/accessories/bandana_green.tres",
+		"res://resources/progression/accessories/bow_red.tres",
+		"res://resources/progression/accessories/tag_shared.tres",
+		"res://resources/progression/accessories/tail_ribbon.tres",
+		"res://resources/progression/accessories/trail_sparkle.tres",
+	],
+	ISLANDS_DIR: [
+		"res://resources/progression/islands/island_beach.tres",
+	],
+}
+
 const LegacyCompanionIds := {
 	"beach_sandy": "companion_sandy",
 }
@@ -49,21 +73,38 @@ static func is_valid() -> bool:
 
 
 static func _load_resources(dir_path: String, target: Dictionary) -> void:
+	var loaded_before: int = target.size()
+	_load_resources_from_dir(dir_path, target)
+	if target.size() == loaded_before:
+		_load_resources_from_manifest(dir_path, target)
+
+
+static func _load_resources_from_dir(dir_path: String, target: Dictionary) -> void:
 	var dir := DirAccess.open(dir_path)
 	if dir == null:
-		push_warning("ProgressionRegistry: missing directory %s" % dir_path)
 		return
 	dir.list_dir_begin()
 	var file_name := dir.get_next()
 	while file_name != "":
 		if not dir.current_is_dir() and file_name.ends_with(".tres"):
-			var path := dir_path.path_join(file_name)
-			var resource: Resource = load(path)
-			if resource == null:
-				push_error("ProgressionRegistry: failed to load %s" % path)
-			else:
-				_register_resource(resource, target)
+			_load_resource_at(dir_path.path_join(file_name), target)
 		file_name = dir.get_next()
+
+
+static func _load_resources_from_manifest(dir_path: String, target: Dictionary) -> void:
+	if not DIR_MANIFEST.has(dir_path):
+		push_warning("ProgressionRegistry: no manifest for %s" % dir_path)
+		return
+	for path: String in DIR_MANIFEST[dir_path]:
+		_load_resource_at(path, target)
+
+
+static func _load_resource_at(path: String, target: Dictionary) -> void:
+	var resource: Resource = load(path)
+	if resource == null:
+		push_error("ProgressionRegistry: failed to load %s" % path)
+	else:
+		_register_resource(resource, target)
 
 
 static func _register_resource(resource: Resource, target: Dictionary) -> void:
