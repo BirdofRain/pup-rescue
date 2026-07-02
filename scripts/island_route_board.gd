@@ -9,6 +9,11 @@ var _nodes: Array[IslandRouteNode] = []
 var _line_color: Color = Color(0.72, 0.78, 0.88, 0.95)
 var _line_width: float = 5.0
 var _positions: PackedVector2Array = PackedVector2Array()
+var _custom_marker_slots: PackedVector2Array = PackedVector2Array()
+
+
+func set_route_marker_slots(slots: PackedVector2Array) -> void:
+	_custom_marker_slots = slots
 
 
 func clear_board() -> void:
@@ -18,6 +23,10 @@ func clear_board() -> void:
 	_nodes.clear()
 	_positions = PackedVector2Array()
 	queue_redraw()
+
+
+func has_custom_marker_slots(count: int) -> bool:
+	return _custom_marker_slots.size() >= count and count > 0
 
 
 func build_route(
@@ -92,6 +101,11 @@ func _relayout() -> void:
 
 func _route_positions(w: float, h: float, count: int, landscape: bool) -> PackedVector2Array:
 	var out: PackedVector2Array = []
+	if has_custom_marker_slots(count):
+		for i in range(count):
+			var slot: Vector2 = _custom_marker_slots[i]
+			out.append(Vector2(slot.x * w, slot.y * h))
+		return out
 	var margin := 48.0
 	if landscape:
 		for i in range(count):

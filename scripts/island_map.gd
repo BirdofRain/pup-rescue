@@ -48,6 +48,8 @@ const THEME_PALETTE := {
 @onready var pup_name_label: Label = $RootMargin/RootVBox/MainSplit/PupPanel/PupVBox/PupNameLabel
 @onready var pup_status_label: Label = $RootMargin/RootVBox/MainSplit/PupPanel/PupVBox/PupStatusLabel
 @onready var route_host: Control = $RootMargin/RootVBox/MainSplit/RouteHost
+@onready var route_map_art: TextureRect = $RootMargin/RootVBox/MainSplit/RouteHost/MapArt
+@onready var route_map_fallback: ColorRect = $RootMargin/RootVBox/MainSplit/RouteHost/MapFallback
 @onready var locked_banner: Label = $RootMargin/RootVBox/MainSplit/RouteHost/LockedBanner
 @onready var panel_backdrop: ColorRect = $PanelBackdrop
 @onready var level_panel_host: CenterContainer = $LevelPanelHost
@@ -94,6 +96,7 @@ func _ready() -> void:
 	_setup_portrait_overlay()
 	_save.island_progress_changed.connect(_on_island_progress_changed)
 	_refresh()
+	call_deferred("_apply_island_map_art_deferred")
 	call_deferred("_process_map_feedback")
 
 
@@ -265,14 +268,20 @@ func _notification(what: int) -> void:
 
 
 func _build_dynamic_ui() -> void:
+	if route_map_fallback != null:
+		route_map_fallback.z_index = 0
+	if route_map_art != null:
+		route_map_art.z_index = 1
 	_route_board = IslandRouteBoardScript.new()
 	_route_board.name = "RouteBoard"
+	_route_board.z_index = 2
 	_route_board.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_route_board.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_route_board.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_route_board.level_node_selected.connect(_on_level_node_selected)
 	route_host.add_child(_route_board)
-	route_host.move_child(_route_board, 0)
+	if locked_banner != null:
+		locked_banner.z_index = 3
 
 	_level_panel = IslandLevelPanelScript.new()
 	_level_panel.name = "LevelPanel"
@@ -432,6 +441,8 @@ func _swap_main_split(landscape: bool) -> void:
 	main_split = replacement
 	pup_panel = replacement.get_node("PupPanel")
 	route_host = replacement.get_node("RouteHost")
+	route_map_art = route_host.get_node_or_null("MapArt") as TextureRect
+	route_map_fallback = route_host.get_node_or_null("MapFallback") as ColorRect
 	locked_banner = route_host.get_node("LockedBanner")
 
 
@@ -446,6 +457,8 @@ func _refresh() -> void:
 	var unlocked: bool = _save.is_island_unlocked(_current_island_id)
 	var theme_id: String = island.theme_id if island else str(legacy.get("theme", "default"))
 	_apply_theme(theme_id)
+	_apply_island_map_art(island, unlocked)
+	call_deferred("_apply_island_map_art_deferred")
 
 	island_name_label.text = island.display_name if island else str(legacy.get("name", _current_island_id))
 	theme_label.text = theme_id.capitalize()
@@ -463,6 +476,8 @@ func _apply_theme(theme_id: String) -> void:
 		background.color = palette["sky"]
 	if _route_board:
 		_route_board._line_color = palette["accent"].darkened(0.1)
+	if route_map_fallback != null:
+		route_map_fallback.color = palette["sand"]
 	if portrait_frame:
 		var frame_style := StyleBoxFlat.new()
 		frame_style.bg_color = palette["sand"]
@@ -470,6 +485,44 @@ func _apply_theme(theme_id: String) -> void:
 		frame_style.set_border_width_all(2)
 		frame_style.border_color = palette["accent"]
 		portrait_frame.add_theme_stylebox_override("panel", frame_style)
+
+
+func _apply_island_map_art_deferred() -> void:
+	var island: IslandDefinition = ProgressionRegistryScript.get_island(_current_island_id)
+	var unlocked: bool = _save.is_island_unlocked(_current_island_id)
+	_apply_island_map_art(island, unlocked)
+
+
+func _apply_island_map_art(island: IslandDefinition, unlocked: bool) -> void:
+	var tex: Texture2D = _load_island_map_texture(island)
+	var has_art: bool = tex != null
+	if route_map_fallback != null:
+		route_map_fallback.visible = not has_art
+	if route_map_art == null:
+		return
+	if not has_art:
+		route_map_art.visible = false
+		route_map_art.texture = null
+		return
+	route_map_art.texture = tex
+	route_map_art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	route_map_art.visible = true
+	route_map_art.modulate = Color(0.62, 0.62, 0.66, 0.92) if not unlocked else Color.WHITE
+
+
+func _load_island_map_texture(island: IslandDefinition) -> Texture2D:
+	if island == null:
+		return null
+	var path: String = island.map_banner_path.strip_edges()
+	if path == "":
+		return null
+	if not ResourceLoader.exists(path):
+		push_warning("IslandMap: map art not found at %s" % path)
+		return null
+	var tex: Texture2D = load(path) as Texture2D
+	if tex == null:
+		push_warning("IslandMap: failed to load map art at %s" % path)
+	return tex
 
 
 func _refresh_island_markers(theme_id: String) -> void:
@@ -615,6 +668,10 @@ func _refresh_route(island: IslandDefinition, progress: Dictionary, unlocked: bo
 	for local_level in range(level_count):
 		states.append(_node_state(local_level, progress, unlocked))
 		titles.append(_level_display_name(island, local_level))
+	if island != null:
+		_route_board.set_route_marker_slots(island.route_marker_slots)
+	else:
+		_route_board.set_route_marker_slots(PackedVector2Array())
 	_route_board.build_route(states, discovery_idx, discovery_found, titles)
 
 
