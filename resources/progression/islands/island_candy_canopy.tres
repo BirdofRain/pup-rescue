@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="IslandDefinition" load_steps=3 format=3 uid="uid://island_candy_canopy"]
+
+[ext_resource type="Script" path="res://scripts/progression/island_definition.gd" id="1"]
+[ext_resource type="Resource" script_class="UnlockRequirement" path="res://resources/progression/islands/candy_canopy_unlock.tres" id="2"]
+
+[resource]
+script = ExtResource("1")
+island_id = "candy_canopy"
+display_name = "Candy Canopy"
+description = "Sweet trails, gumdrop groves, and a sprinkle-covered pup waiting to be found."
+theme_id = "candy"
+level_ids = PackedStringArray("level_candy_canopy_01", "level_candy_canopy_02", "level_candy_canopy_03", "level_candy_canopy_04")
+special_companion_id = "companion_sprinkle"
+map_icon_path = ""
+map_banner_path = ""
+wall_palette_index = 1
+unlock_requirement = ExtResource("2")
+escort_badges_required = 4

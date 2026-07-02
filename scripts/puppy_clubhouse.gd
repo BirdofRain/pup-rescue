@@ -11,6 +11,7 @@ const MUTED := Color(0.34, 0.40, 0.50)
 
 const THEME_PALETTE := {
 	"beach": Color(0.92, 0.72, 0.28),
+	"candy": Color(0.92, 0.38, 0.62),
 	"default": Color(0.22, 0.48, 0.82),
 }
 
