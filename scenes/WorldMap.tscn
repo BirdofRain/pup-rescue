@@ -58,6 +58,7 @@ clip_contents = true
 
 [node name="WorldMapArt" type="TextureRect" parent="RootMargin/RootVBox/MapHost"]
 visible = false
+z_index = 0
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -68,7 +69,9 @@ mouse_filter = 2
 expand_mode = 1
 stretch_mode = 6
 
-[node name="IslandsLayer" type="Control" parent="RootMargin/RootVBox/MapHost"]
+[node name="MapFallback" type="ColorRect" parent="RootMargin/RootVBox/MapHost"]
+visible = true
+z_index = 0
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -76,6 +79,17 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
+color = Color(0.42, 0.62, 0.88, 1)
+
+[node name="IslandsLayer" type="Control" parent="RootMargin/RootVBox/MapHost"]
+z_index = 1
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
 
 [node name="LockedBanner" type="Label" parent="RootMargin/RootVBox/MapHost"]
 visible = false

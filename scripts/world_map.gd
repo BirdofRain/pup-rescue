@@ -14,6 +14,7 @@ const THEME_ACCENT := {
 
 @onready var background: ColorRect = $Background
 @onready var world_map_art: TextureRect = $RootMargin/RootVBox/MapHost/WorldMapArt
+@onready var map_fallback: ColorRect = $RootMargin/RootVBox/MapHost/MapFallback
 @onready var islands_layer: Control = $RootMargin/RootVBox/MapHost/IslandsLayer
 @onready var locked_banner: Label = $RootMargin/RootVBox/MapHost/LockedBanner
 @onready var subtitle_label: Label = $RootMargin/RootVBox/SubtitleLabel
@@ -21,6 +22,7 @@ const THEME_ACCENT := {
 var _save: GameSave
 var _island_ids: Array[String] = []
 var _lock_banner_timer: float = 0.0
+var _relayout_pending: bool = false
 
 
 func _ready() -> void:
@@ -32,7 +34,8 @@ func _ready() -> void:
 	_apply_world_map_art()
 	_style_footer()
 	_refresh()
-	islands_layer.resized.connect(_relayout_island_markers)
+	if not islands_layer.resized.is_connected(_relayout_island_markers):
+		islands_layer.resized.connect(_relayout_island_markers)
 
 
 func _process(delta: float) -> void:
@@ -50,26 +53,36 @@ func _load_island_list() -> void:
 
 
 func _apply_world_map_art() -> void:
-	if world_map_art == null:
-		return
-	var tex: Texture2D = _load_texture_if_exists(WORLD_MAP_TEXTURE_PATH)
-	if tex == null:
-		world_map_art.visible = false
-		world_map_art.texture = null
-		if background:
-			background.color = Color(0.42, 0.62, 0.88, 1.0)
-		return
-	world_map_art.texture = tex
-	world_map_art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	world_map_art.visible = true
+	var tex: Texture2D = _load_map_texture(WORLD_MAP_TEXTURE_PATH)
+	var has_art: bool = tex != null and world_map_art != null
+	if world_map_art != null:
+		if has_art:
+			world_map_art.texture = tex
+			world_map_art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			world_map_art.visible = true
+		else:
+			world_map_art.visible = false
+			world_map_art.texture = null
+	if map_fallback != null:
+		map_fallback.visible = not has_art
 	if background:
-		background.color = Color(0.36, 0.52, 0.72, 1.0)
+		background.color = Color(0.36, 0.52, 0.72, 1.0) if has_art else Color(0.42, 0.62, 0.88, 1.0)
 
 
-func _load_texture_if_exists(path: String) -> Texture2D:
-	if path.strip_edges() == "" or not ResourceLoader.exists(path.strip_edges()):
+func _load_map_texture(path: String) -> Texture2D:
+	var clean: String = path.strip_edges()
+	if clean == "":
 		return null
-	return load(path.strip_edges()) as Texture2D
+	if ResourceLoader.exists(clean):
+		var imported: Texture2D = load(clean) as Texture2D
+		if imported != null:
+			return imported
+	var absolute: String = ProjectSettings.globalize_path(clean)
+	if FileAccess.file_exists(absolute):
+		var img: Image = Image.load_from_file(absolute)
+		if img != null and not img.is_empty():
+			return ImageTexture.create_from_image(img)
+	return null
 
 
 func _refresh() -> void:
@@ -126,8 +139,9 @@ func _style_island_marker(btn: Button, theme_id: String, unlocked: bool) -> void
 
 
 func _relayout_island_markers() -> void:
-	if islands_layer == null:
+	if _relayout_pending or islands_layer == null:
 		return
+	_relayout_pending = true
 	var rect := islands_layer.get_rect()
 	var w: float = maxf(rect.size.x, 1.0)
 	var h: float = maxf(rect.size.y, 1.0)
@@ -138,8 +152,9 @@ func _relayout_island_markers() -> void:
 			continue
 		var island_id: String = str(marker.get_meta("island_id", ""))
 		var slot: Vector2 = _world_slot_for_island(island_id, i, auto_slots)
-		var size: Vector2 = marker.custom_minimum_size
-		marker.position = Vector2(slot.x * w, slot.y * h) - size * 0.5
+		var marker_size: Vector2 = marker.custom_minimum_size
+		marker.position = Vector2(slot.x * w, slot.y * h) - marker_size * 0.5
+	_relayout_pending = false
 
 
 func _world_slot_for_island(island_id: String, index: int, auto_slots: PackedVector2Array) -> Vector2:
