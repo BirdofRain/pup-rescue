@@ -13,6 +13,7 @@ level_ids = PackedStringArray("level_beach_01", "level_beach_02", "level_beach_0
 special_companion_id = "companion_sandy"
 map_icon_path = ""
 map_banner_path = ""
+world_map_slot = Vector2(0.34, 0.58)
 wall_palette_index = 0
 unlock_requirement = ExtResource("2")
 escort_badges_required = 5

@@ -211,7 +211,7 @@ func _apply_slot_columns() -> void:
 
 
 func _on_island_map_pressed() -> void:
-	get_tree().change_scene_to_file("res://scenes/IslandMap.tscn")
+	get_tree().change_scene_to_file("res://scenes/WorldMap.tscn")
 
 
 func _on_menu_pressed() -> void:

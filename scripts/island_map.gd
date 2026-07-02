@@ -380,12 +380,12 @@ func _setup_footer_nav() -> void:
 		return
 	var back_btn: Button = footer.get_node_or_null("BackBtn") as Button
 	if back_btn:
-		back_btn.text = "Main Menu"
-	if footer.get_node_or_null("IslandMapHereBtn") != null:
+		back_btn.text = "World Map"
+	if footer.get_node_or_null("WorldMapHereBtn") != null:
 		return
 	var map_here_btn := Button.new()
-	map_here_btn.name = "IslandMapHereBtn"
-	map_here_btn.text = "Island Map"
+	map_here_btn.name = "WorldMapHereBtn"
+	map_here_btn.text = "Island Detail"
 	map_here_btn.disabled = true
 	map_here_btn.custom_minimum_size = Vector2(140, 44)
 	_style_primary_button(map_here_btn, Color(0.18, 0.58, 0.38))
@@ -775,7 +775,7 @@ func _on_next_island() -> void:
 
 
 func _on_back_pressed() -> void:
-	get_tree().change_scene_to_file("res://scenes/Menu.tscn")
+	get_tree().change_scene_to_file("res://scenes/WorldMap.tscn")
 
 
 func _on_pup_card_gui_input(event: InputEvent) -> void:
