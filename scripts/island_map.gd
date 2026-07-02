@@ -22,6 +22,11 @@ const THEME_PALETTE := {
 		"sand": Color(0.96, 0.88, 0.72),
 		"accent": Color(0.92, 0.72, 0.28),
 	},
+	"candy": {
+		"sky": Color(0.88, 0.62, 0.82),
+		"sand": Color(0.98, 0.90, 0.96),
+		"accent": Color(0.92, 0.38, 0.62),
+	},
 	"default": {
 		"sky": Color(0.55, 0.72, 0.95),
 		"sand": Color(0.94, 0.94, 0.98),
@@ -444,9 +449,7 @@ func _refresh() -> void:
 
 	island_name_label.text = island.display_name if island else str(legacy.get("name", _current_island_id))
 	theme_label.text = theme_id.capitalize()
-	island_index_label.text = "Island %d / %d" % [_island_index + 1, _island_ids.size()]
-	prev_island_btn.disabled = _island_ids.size() <= 1
-	next_island_btn.disabled = _island_ids.size() <= 1
+	_refresh_nav_row()
 
 	_refresh_island_markers(theme_id)
 	_refresh_pup_card(island, progress, unlocked)
@@ -579,8 +582,31 @@ func _set_portrait_border(color: Color) -> void:
 	portrait_frame.add_theme_stylebox_override("panel", frame_style)
 
 
+func _refresh_nav_row() -> void:
+	var total: int = _island_ids.size()
+	var has_multiple: bool = total > 1
+	prev_island_btn.disabled = not has_multiple
+	next_island_btn.disabled = not has_multiple
+	if total <= 1:
+		island_index_label.text = "Island 1 / 1 · More islands coming soon!"
+	else:
+		island_index_label.text = "Island %d / %d" % [_island_index + 1, total]
+
+
+func _locked_island_message(island: IslandDefinition) -> String:
+	if island != null and island.unlock_requirement != null:
+		var req_island_id: String = island.unlock_requirement.required_island_id
+		if req_island_id != "":
+			var prev_island: IslandDefinition = ProgressionRegistryScript.get_island(req_island_id)
+			if prev_island != null:
+				return "Complete all %s levels to unlock!" % prev_island.display_name
+	return "Island locked — keep exploring!"
+
+
 func _refresh_route(island: IslandDefinition, progress: Dictionary, unlocked: bool) -> void:
 	locked_banner.visible = not unlocked
+	if not unlocked:
+		locked_banner.text = _locked_island_message(island)
 	var level_count: int = IslandCatalogScript.level_count(_current_island_id)
 	var discovery_idx: int = IslandCatalogScript.hidden_level_index(_current_island_id)
 	var discovery_found: bool = _save.is_special_pup_found(_current_island_id)

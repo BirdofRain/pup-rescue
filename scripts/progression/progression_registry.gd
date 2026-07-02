@@ -13,9 +13,14 @@ const DIR_MANIFEST: Dictionary = {
 		"res://resources/progression/levels/level_beach_03.tres",
 		"res://resources/progression/levels/level_beach_04.tres",
 		"res://resources/progression/levels/level_beach_05.tres",
+		"res://resources/progression/levels/level_candy_canopy_01.tres",
+		"res://resources/progression/levels/level_candy_canopy_02.tres",
+		"res://resources/progression/levels/level_candy_canopy_03.tres",
+		"res://resources/progression/levels/level_candy_canopy_04.tres",
 	],
 	COMPANIONS_DIR: [
 		"res://resources/progression/companions/companion_sandy.tres",
+		"res://resources/progression/companions/companion_sprinkle.tres",
 	],
 	ACCESSORIES_DIR: [
 		"res://resources/progression/accessories/aura_glow.tres",
@@ -27,6 +32,7 @@ const DIR_MANIFEST: Dictionary = {
 	],
 	ISLANDS_DIR: [
 		"res://resources/progression/islands/island_beach.tres",
+		"res://resources/progression/islands/island_candy_canopy.tres",
 	],
 }
 

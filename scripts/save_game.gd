@@ -84,7 +84,10 @@ func load_save() -> bool:
 		return false
 	data = migrate_save(data)
 	_apply_save_dict(data)
-	if sync_owned_companion_starter_accessories():
+	var needs_save := sync_owned_companion_starter_accessories()
+	if sync_island_unlocks():
+		needs_save = true
+	if needs_save:
 		save_game()
 	_sync_legacy_progression_feedback()
 	return true
@@ -229,6 +232,44 @@ func _apply_save_dict(data: Dictionary) -> void:
 	total_rescued = total_temporary_puppies_rescued
 	_ensure_island_defaults()
 	sync_current_level_from_islands()
+
+
+func is_island_levels_complete(island_id: String) -> bool:
+	var level_count: int = _IslandCatalog.level_count(island_id)
+	if level_count <= 0:
+		return false
+	var progress: Dictionary = get_island_progress(island_id)
+	return _IslandProgress.completed_count(progress, level_count) >= level_count
+
+
+func meets_island_unlock_requirement(island_id: String) -> bool:
+	_ProgressionRegistry.ensure_loaded()
+	var island: IslandDefinition = _ProgressionRegistry.get_island(island_id)
+	if island == null:
+		return false
+	if island_id == _IslandCatalog.first_island_id():
+		return true
+	var req: UnlockRequirement = island.unlock_requirement
+	if req == null:
+		return false
+	if req.required_island_id != "" and not is_island_levels_complete(req.required_island_id):
+		return false
+	if req.required_completed_level_id != "":
+		var req_level: LevelDefinition = _ProgressionRegistry.get_level(req.required_completed_level_id)
+		if req_level == null:
+			return false
+		if not is_level_completed_by_id(req_level.island_id, req.required_completed_level_id):
+			return false
+	return true
+
+
+func sync_island_unlocks() -> bool:
+	var changed := false
+	for island: IslandDefinition in _ProgressionRegistry.all_islands():
+		if meets_island_unlock_requirement(island.island_id) and not is_island_unlocked(island.island_id):
+			islands[island.island_id]["unlocked"] = true
+			changed = true
+	return changed
 
 
 func _ensure_island_defaults() -> void:
@@ -817,6 +858,7 @@ func record_island_level_complete(
 
 	if progress_features_unlocked() and not replay:
 		_append_leaderboard_entry(global_completed, total_rescued, squad_size)
+	sync_island_unlocks()
 	save_game()
 	island_progress_changed.emit(island_id)
 	return result

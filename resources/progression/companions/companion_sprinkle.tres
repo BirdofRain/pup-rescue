@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="CompanionDefinition" load_steps=2 format=3 uid="uid://companion_sprinkle"]
+
+[ext_resource type="Script" path="res://scripts/progression/companion_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+companion_id = "companion_sprinkle"
+default_name = "Sprinkle"
+home_island_id = "candy_canopy"
+visual_scene_path = "res://scenes/PuppySmall.tscn"
+coat_index = 5
+pattern_id = "rose_spaniel"
+starter_accessory_ids = PackedStringArray("bow_red", "tail_ribbon", "trail_sparkle", "tag_shared")
+portrait_path = ""
