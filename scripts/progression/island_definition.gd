@@ -9,7 +9,12 @@ class_name IslandDefinition
 @export var level_ids: PackedStringArray = PackedStringArray()
 @export var special_companion_id: String = ""
 @export var map_icon_path: String = ""
+## Full island-map background PNG (Island Map UI only; does not affect unlocks).
 @export var map_banner_path: String = ""
+## Normalized 0–1 positions for route level nodes on the map art (x, y within RouteHost).
+@export var route_marker_slots: PackedVector2Array = PackedVector2Array()
+## Normalized 0–1 position on the world map screen (-1, -1 = auto layout).
+@export var world_map_slot: Vector2 = Vector2(-1, -1)
 @export var wall_palette_index: int = 0
 @export var unlock_requirement: UnlockRequirement
 @export var escort_badges_required: int = 0

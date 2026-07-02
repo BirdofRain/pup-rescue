@@ -110,6 +110,8 @@ func show_level(
 
 
 func hide_panel() -> void:
+	if not visible:
+		return
 	visible = false
 	closed.emit()
 

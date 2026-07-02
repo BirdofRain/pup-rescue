@@ -48,9 +48,11 @@ const THEME_PALETTE := {
 @onready var pup_name_label: Label = $RootMargin/RootVBox/MainSplit/PupPanel/PupVBox/PupNameLabel
 @onready var pup_status_label: Label = $RootMargin/RootVBox/MainSplit/PupPanel/PupVBox/PupStatusLabel
 @onready var route_host: Control = $RootMargin/RootVBox/MainSplit/RouteHost
+@onready var route_map_art: TextureRect = $RootMargin/RootVBox/MainSplit/RouteHost/MapArt
+@onready var route_map_fallback: ColorRect = $RootMargin/RootVBox/MainSplit/RouteHost/MapFallback
 @onready var locked_banner: Label = $RootMargin/RootVBox/MainSplit/RouteHost/LockedBanner
-@onready var panel_backdrop: ColorRect = $PanelBackdrop
-@onready var level_panel_host: CenterContainer = $LevelPanelHost
+@onready var panel_backdrop: ColorRect = $LevelPanelLayer/PanelBackdrop
+@onready var level_panel_host: CenterContainer = $LevelPanelLayer/LevelPanelHost
 
 var _save: GameSave
 var _route_board: IslandRouteBoard
@@ -69,6 +71,8 @@ var _feedback_busy: bool = false
 var _island_ids: Array[String] = []
 var _island_index: int = 0
 var _current_island_id: String = ""
+var _is_refreshing: bool = false
+var _layout_updating: bool = false
 
 
 func _ready() -> void:
@@ -92,8 +96,10 @@ func _ready() -> void:
 		_island_index = _island_ids.find(return_island)
 	_apply_layout_for_viewport()
 	_setup_portrait_overlay()
-	_save.island_progress_changed.connect(_on_island_progress_changed)
+	if not _save.island_progress_changed.is_connected(_on_island_progress_changed):
+		_save.island_progress_changed.connect(_on_island_progress_changed)
 	_refresh()
+	call_deferred("_apply_island_map_art_deferred")
 	call_deferred("_process_map_feedback")
 
 
@@ -265,14 +271,21 @@ func _notification(what: int) -> void:
 
 
 func _build_dynamic_ui() -> void:
+	if route_map_fallback != null:
+		route_map_fallback.z_index = 0
+	if route_map_art != null:
+		route_map_art.z_index = 0
 	_route_board = IslandRouteBoardScript.new()
 	_route_board.name = "RouteBoard"
+	_route_board.z_index = 2
+	_route_board.marker_size = Vector2(56, 56)
 	_route_board.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_route_board.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_route_board.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_route_board.level_node_selected.connect(_on_level_node_selected)
 	route_host.add_child(_route_board)
-	route_host.move_child(_route_board, 0)
+	if locked_banner != null:
+		locked_banner.z_index = 4
 
 	_level_panel = IslandLevelPanelScript.new()
 	_level_panel.name = "LevelPanel"
@@ -371,12 +384,12 @@ func _setup_footer_nav() -> void:
 		return
 	var back_btn: Button = footer.get_node_or_null("BackBtn") as Button
 	if back_btn:
-		back_btn.text = "Main Menu"
-	if footer.get_node_or_null("IslandMapHereBtn") != null:
+		back_btn.text = "World Map"
+	if footer.get_node_or_null("WorldMapHereBtn") != null:
 		return
 	var map_here_btn := Button.new()
-	map_here_btn.name = "IslandMapHereBtn"
-	map_here_btn.text = "Island Map"
+	map_here_btn.name = "WorldMapHereBtn"
+	map_here_btn.text = "Island Detail"
 	map_here_btn.disabled = true
 	map_here_btn.custom_minimum_size = Vector2(140, 44)
 	_style_primary_button(map_here_btn, Color(0.18, 0.58, 0.38))
@@ -400,6 +413,9 @@ func _load_island_list() -> void:
 
 
 func _apply_layout_for_viewport() -> void:
+	if _layout_updating:
+		return
+	_layout_updating = true
 	var vp := get_viewport_rect().size
 	var landscape: bool = vp.x > vp.y * 1.05
 	if main_split is HBoxContainer and not landscape:
@@ -408,6 +424,7 @@ func _apply_layout_for_viewport() -> void:
 		_swap_main_split(true)
 	if pup_panel:
 		pup_panel.custom_minimum_size = Vector2(220 if landscape else 0, 0 if landscape else 180)
+	_layout_updating = false
 
 
 func _swap_main_split(landscape: bool) -> void:
@@ -418,7 +435,11 @@ func _swap_main_split(landscape: bool) -> void:
 	main_split.remove_child(pup)
 	main_split.remove_child(route)
 	main_split.queue_free()
-	var replacement: BoxContainer = HBoxContainer.new() if landscape else VBoxContainer.new()
+	var replacement: BoxContainer
+	if landscape:
+		replacement = HBoxContainer.new()
+	else:
+		replacement = VBoxContainer.new()
 	replacement.name = "MainSplit"
 	replacement.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	replacement.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -432,12 +453,15 @@ func _swap_main_split(landscape: bool) -> void:
 	main_split = replacement
 	pup_panel = replacement.get_node("PupPanel")
 	route_host = replacement.get_node("RouteHost")
+	route_map_art = route_host.get_node_or_null("MapArt") as TextureRect
+	route_map_fallback = route_host.get_node_or_null("MapFallback") as ColorRect
 	locked_banner = route_host.get_node("LockedBanner")
 
 
 func _refresh() -> void:
-	if _island_ids.is_empty():
+	if _is_refreshing or _island_ids.is_empty():
 		return
+	_is_refreshing = true
 	_current_island_id = _island_ids[_island_index]
 	_save.current_island_id = _current_island_id
 	var island: IslandDefinition = ProgressionRegistryScript.get_island(_current_island_id)
@@ -446,6 +470,8 @@ func _refresh() -> void:
 	var unlocked: bool = _save.is_island_unlocked(_current_island_id)
 	var theme_id: String = island.theme_id if island else str(legacy.get("theme", "default"))
 	_apply_theme(theme_id)
+	_apply_island_map_art(island, unlocked)
+	call_deferred("_apply_island_map_art_deferred")
 
 	island_name_label.text = island.display_name if island else str(legacy.get("name", _current_island_id))
 	theme_label.text = theme_id.capitalize()
@@ -455,6 +481,7 @@ func _refresh() -> void:
 	_refresh_pup_card(island, progress, unlocked)
 	_refresh_route(island, progress, unlocked)
 	_hide_level_panel()
+	_is_refreshing = false
 
 
 func _apply_theme(theme_id: String) -> void:
@@ -463,6 +490,8 @@ func _apply_theme(theme_id: String) -> void:
 		background.color = palette["sky"]
 	if _route_board:
 		_route_board._line_color = palette["accent"].darkened(0.1)
+	if route_map_fallback != null:
+		route_map_fallback.color = palette["sand"]
 	if portrait_frame:
 		var frame_style := StyleBoxFlat.new()
 		frame_style.bg_color = palette["sand"]
@@ -470,6 +499,52 @@ func _apply_theme(theme_id: String) -> void:
 		frame_style.set_border_width_all(2)
 		frame_style.border_color = palette["accent"]
 		portrait_frame.add_theme_stylebox_override("panel", frame_style)
+
+
+func _apply_island_map_art_deferred() -> void:
+	var island: IslandDefinition = ProgressionRegistryScript.get_island(_current_island_id)
+	var unlocked: bool = _save.is_island_unlocked(_current_island_id)
+	_apply_island_map_art(island, unlocked)
+
+
+func _apply_island_map_art(island: IslandDefinition, unlocked: bool) -> void:
+	var tex: Texture2D = _load_island_map_texture(island)
+	var has_art: bool = tex != null
+	if route_map_fallback != null:
+		route_map_fallback.visible = not has_art
+	if route_map_art == null:
+		return
+	if not has_art:
+		route_map_art.visible = false
+		route_map_art.texture = null
+		return
+	route_map_art.texture = tex
+	route_map_art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	route_map_art.visible = true
+	route_map_art.modulate = Color(0.62, 0.62, 0.66, 0.92) if not unlocked else Color.WHITE
+
+
+func _load_island_map_texture(island: IslandDefinition) -> Texture2D:
+	if island == null:
+		return null
+	return _load_map_texture(island.map_banner_path)
+
+
+func _load_map_texture(path: String) -> Texture2D:
+	var clean: String = path.strip_edges()
+	if clean == "":
+		return null
+	if ResourceLoader.exists(clean):
+		var imported: Texture2D = load(clean) as Texture2D
+		if imported != null:
+			return imported
+	var absolute: String = ProjectSettings.globalize_path(clean)
+	if FileAccess.file_exists(absolute):
+		var img: Image = Image.load_from_file(absolute)
+		if img != null and not img.is_empty():
+			return ImageTexture.create_from_image(img)
+	push_warning("IslandMap: map art not found at %s" % clean)
+	return null
 
 
 func _refresh_island_markers(theme_id: String) -> void:
@@ -514,7 +589,7 @@ func _marker_tooltip(island_id: String) -> String:
 	return "Escort complete"
 
 
-func _refresh_pup_card(island: IslandDefinition, progress: Dictionary, unlocked: bool) -> void:
+func _refresh_pup_card(_island: IslandDefinition, progress: Dictionary, unlocked: bool) -> void:
 	var companion: CompanionDefinition = ProgressionRegistryScript.get_special_companion(_current_island_id)
 	var pup_name: String = companion.default_name if companion else "Special pup"
 	var found: bool = _save.is_special_pup_found(_current_island_id)
@@ -615,6 +690,10 @@ func _refresh_route(island: IslandDefinition, progress: Dictionary, unlocked: bo
 	for local_level in range(level_count):
 		states.append(_node_state(local_level, progress, unlocked))
 		titles.append(_level_display_name(island, local_level))
+	if island != null:
+		_route_board.set_route_marker_slots(island.route_marker_slots)
+	else:
+		_route_board.set_route_marker_slots(PackedVector2Array())
 	_route_board.build_route(states, discovery_idx, discovery_found, titles)
 
 
@@ -630,7 +709,7 @@ func _node_state(local_level: int, progress: Dictionary, island_unlocked: bool) 
 	return IslandRouteNodeScript.State.LOCKED
 
 
-func _level_display_name(island: IslandDefinition, local_level: int) -> String:
+func _level_display_name(_island: IslandDefinition, local_level: int) -> String:
 	var level_id: String = IslandCatalogScript.get_level_id(_current_island_id, local_level)
 	var level: LevelDefinition = ProgressionRegistryScript.get_level(level_id)
 	if level != null and level.display_name != "":
@@ -663,9 +742,10 @@ func _on_level_node_selected(local_level: int) -> void:
 
 
 func _hide_level_panel() -> void:
-	if _level_panel:
+	if _level_panel and _level_panel.visible:
 		_level_panel.hide_panel()
-	panel_backdrop.visible = false
+	if panel_backdrop:
+		panel_backdrop.visible = false
 
 
 func _on_backdrop_gui_input(event: InputEvent) -> void:
@@ -718,7 +798,7 @@ func _on_next_island() -> void:
 
 
 func _on_back_pressed() -> void:
-	get_tree().change_scene_to_file("res://scenes/Menu.tscn")
+	get_tree().change_scene_to_file("res://scenes/WorldMap.tscn")
 
 
 func _on_pup_card_gui_input(event: InputEvent) -> void:

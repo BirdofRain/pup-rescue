@@ -43,7 +43,8 @@ var _replay_label: Label
 
 func _ready() -> void:
 	focus_mode = Control.FOCUS_NONE
-	custom_minimum_size = Vector2(72, 72)
+	if custom_minimum_size == Vector2.ZERO:
+		custom_minimum_size = Vector2(56, 56)
 	toggle_mode = false
 	pressed.connect(_on_pressed)
 	_build_children()
@@ -63,7 +64,7 @@ func _build_children() -> void:
 	_discovery_label.text = "?"
 	_discovery_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_discovery_label.add_theme_font_size_override("font_size", 16)
-	_discovery_label.position = Vector2(44, -6)
+	_discovery_label.position = Vector2(34, -4)
 	_discovery_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_discovery_label)
 
@@ -81,7 +82,7 @@ func _build_children() -> void:
 	_completed_label.text = "✓"
 	_completed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_completed_label.add_theme_font_size_override("font_size", 14)
-	_completed_label.position = Vector2(4, 48)
+	_completed_label.position = Vector2(2, 36)
 	_completed_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_completed_label)
 
@@ -90,7 +91,7 @@ func _build_children() -> void:
 	_replay_label.text = "↻"
 	_replay_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_replay_label.add_theme_font_size_override("font_size", 13)
-	_replay_label.position = Vector2(48, 48)
+	_replay_label.position = Vector2(36, 36)
 	_replay_label.tooltip_text = "Replay available"
 	_replay_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_replay_label)
@@ -120,7 +121,7 @@ func _apply_visuals(level_index: int) -> void:
 	style.bg_color = colors["fill"]
 	style.border_color = colors["border"]
 	style.set_border_width_all(3)
-	style.set_corner_radius_all(36)
+	style.set_corner_radius_all(int(custom_minimum_size.x * 0.5))
 	add_theme_stylebox_override("normal", style)
 	var hover := style.duplicate()
 	hover.bg_color = colors["fill"].lightened(0.06)
@@ -132,7 +133,7 @@ func _apply_visuals(level_index: int) -> void:
 
 	if _index_label:
 		_index_label.text = str(level_index + 1)
-		_index_label.add_theme_font_size_override("font_size", 22)
+		_index_label.add_theme_font_size_override("font_size", 18)
 		_index_label.add_theme_color_override("font_color", colors["text"])
 
 	if _discovery_label:

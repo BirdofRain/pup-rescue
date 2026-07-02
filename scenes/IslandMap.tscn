@@ -141,8 +141,35 @@ custom_minimum_size = Vector2(320, 280)
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+clip_contents = true
+
+[node name="MapArt" type="TextureRect" parent="RootMargin/RootVBox/MainSplit/RouteHost"]
+visible = false
+z_index = 0
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 6
+
+[node name="MapFallback" type="ColorRect" parent="RootMargin/RootVBox/MainSplit/RouteHost"]
+visible = true
+z_index = 0
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.96, 0.88, 0.72, 1)
 
 [node name="LockedBanner" type="Label" parent="RootMargin/RootVBox/MainSplit/RouteHost"]
+z_index = 4
 visible = false
 layout_mode = 1
 anchors_preset = 8
@@ -171,9 +198,11 @@ custom_minimum_size = Vector2(180, 44)
 layout_mode = 2
 text = "Back to Menu"
 
-[node name="PanelBackdrop" type="ColorRect" parent="."]
+[node name="LevelPanelLayer" type="CanvasLayer" parent="."]
+layer = 10
+
+[node name="PanelBackdrop" type="ColorRect" parent="LevelPanelLayer"]
 visible = false
-layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -182,8 +211,7 @@ grow_vertical = 2
 mouse_filter = 0
 color = Color(0.08, 0.12, 0.18, 0.45)
 
-[node name="LevelPanelHost" type="CenterContainer" parent="."]
-layout_mode = 1
+[node name="LevelPanelHost" type="CenterContainer" parent="LevelPanelLayer"]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0

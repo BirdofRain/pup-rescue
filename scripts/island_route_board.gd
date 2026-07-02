@@ -9,6 +9,14 @@ var _nodes: Array[IslandRouteNode] = []
 var _line_color: Color = Color(0.72, 0.78, 0.88, 0.95)
 var _line_width: float = 5.0
 var _positions: PackedVector2Array = PackedVector2Array()
+var _custom_marker_slots: PackedVector2Array = PackedVector2Array()
+var _relayout_pending: bool = false
+## Diameter of each level marker button in RouteHost pixels.
+var marker_size: Vector2 = Vector2(56, 56)
+
+
+func set_route_marker_slots(slots: PackedVector2Array) -> void:
+	_custom_marker_slots = slots
 
 
 func clear_board() -> void:
@@ -18,6 +26,10 @@ func clear_board() -> void:
 	_nodes.clear()
 	_positions = PackedVector2Array()
 	queue_redraw()
+
+
+func has_custom_marker_slots(count: int) -> bool:
+	return _custom_marker_slots.size() >= count and count > 0
 
 
 func build_route(
@@ -32,6 +44,9 @@ func build_route(
 		node.name = "RouteNode_%d" % i
 		var state: IslandRouteNode.State = level_states[i]
 		var title: String = level_titles[i] if i < level_titles.size() else "Level %d" % (i + 1)
+		node.custom_minimum_size = marker_size
+		node.node_selected.connect(_on_node_selected)
+		add_child(node)
 		node.configure(
 			i,
 			state,
@@ -40,8 +55,6 @@ func build_route(
 			i == discovery_index and discovery_found,
 			title
 		)
-		node.node_selected.connect(_on_node_selected)
-		add_child(node)
 		_nodes.append(node)
 	call_deferred("_relayout")
 
@@ -75,8 +88,9 @@ func _notification(what: int) -> void:
 
 
 func _relayout() -> void:
-	if _nodes.is_empty():
+	if _relayout_pending or _nodes.is_empty():
 		return
+	_relayout_pending = true
 	var rect := get_rect()
 	var w: float = maxf(rect.size.x, 1.0)
 	var h: float = maxf(rect.size.y, 1.0)
@@ -85,13 +99,19 @@ func _relayout() -> void:
 	for i in range(_nodes.size()):
 		var node: IslandRouteNode = _nodes[i]
 		var center: Vector2 = _positions[i]
-		var size: Vector2 = node.custom_minimum_size
-		node.position = center - size * 0.5
+		var node_size: Vector2 = node.custom_minimum_size
+		node.position = center - node_size * 0.5
 	queue_redraw()
+	_relayout_pending = false
 
 
 func _route_positions(w: float, h: float, count: int, landscape: bool) -> PackedVector2Array:
 	var out: PackedVector2Array = []
+	if has_custom_marker_slots(count):
+		for i in range(count):
+			var slot: Vector2 = _custom_marker_slots[i]
+			out.append(Vector2(slot.x * w, slot.y * h))
+		return out
 	var margin := 48.0
 	if landscape:
 		for i in range(count):
@@ -117,7 +137,12 @@ func _route_positions(w: float, h: float, count: int, landscape: bool) -> Packed
 func _draw() -> void:
 	if _positions.size() < 2:
 		return
+	var use_custom_slots: bool = has_custom_marker_slots(_nodes.size())
+	var line_w: float = 3.0 if use_custom_slots else _line_width
+	var line_color: Color = _line_color
+	if use_custom_slots:
+		line_color = Color(_line_color.r, _line_color.g, _line_color.b, 0.55)
 	for i in range(_positions.size() - 1):
-		draw_line(_positions[i], _positions[i + 1], _line_color, _line_width)
-		draw_circle(_positions[i], _line_width * 0.55, _line_color)
-	draw_circle(_positions[_positions.size() - 1], _line_width * 0.55, _line_color)
+		draw_line(_positions[i], _positions[i + 1], line_color, line_w)
+		draw_circle(_positions[i], line_w * 0.55, line_color)
+	draw_circle(_positions[_positions.size() - 1], line_w * 0.55, line_color)

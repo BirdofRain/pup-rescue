@@ -653,7 +653,7 @@ func _on_play_pressed() -> void:
 	_commit_snap()
 	_commit_touch()
 	_save.prepare_new_game(_selected_coat_index())
-	get_tree().change_scene_to_file("res://scenes/IslandMap.tscn")
+	get_tree().change_scene_to_file("res://scenes/WorldMap.tscn")
 
 
 func _on_continue_pressed() -> void:
@@ -711,7 +711,7 @@ func _build_hub_navigation() -> void:
 	play_vbox.move_child(row, extra_idx)
 	if _save.has_save():
 		var map_btn := Button.new()
-		map_btn.text = "Island Map"
+		map_btn.text = "World Map"
 		map_btn.custom_minimum_size = Vector2(0, 44)
 		map_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		map_btn.pressed.connect(_on_island_map_pressed)
@@ -731,7 +731,7 @@ func _on_island_map_pressed() -> void:
 	_commit_touch()
 	if _save.has_save():
 		_save.load_save()
-	get_tree().change_scene_to_file("res://scenes/IslandMap.tscn")
+	get_tree().change_scene_to_file("res://scenes/WorldMap.tscn")
 
 
 func _on_clubhouse_pressed() -> void:
