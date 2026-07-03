@@ -33,9 +33,13 @@ jobs:
         run: bash scripts/export-web.sh
 
       - name: Deploy to Vercel production
-        if: ${{ secrets.VERCEL_TOKEN != '' }}
-        run: bash scripts/deploy-vercel.sh
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          if [[ -z "${VERCEL_TOKEN}" ]]; then
+            echo "VERCEL_TOKEN not configured — skipping deploy (export succeeded)"
+            exit 0
+          fi
+          bash scripts/deploy-vercel.sh
