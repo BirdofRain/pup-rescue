@@ -240,9 +240,17 @@ func find_path(from_world: Vector3, to_world: Vector3, floor_y: float = 0.0) -> 
 		return result
 	var start: Vector2i = _nearest_walkable_tile(from_world)
 	var goal: Vector2i = _nearest_walkable_tile(to_world)
-	if start == goal:
-		result.append(tile_center(start.x, start.y, floor_y))
+	var cells: Array[Vector2i] = _find_path_cells(start, goal)
+	if cells.is_empty():
 		return result
+	for cell: Vector2i in cells:
+		result.append(tile_center(cell.x, cell.y, floor_y))
+	return result
+
+
+func _find_path_cells(start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
+	if start == goal:
+		return [start]
 	var queue: Array[Vector2i] = [start]
 	var queue_head: int = 0
 	var came_from: Dictionary = {}
@@ -251,7 +259,7 @@ func find_path(from_world: Vector3, to_world: Vector3, floor_y: float = 0.0) -> 
 		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
 	]
 	var found_goal := false
-	while not queue.is_empty():
+	while queue_head < queue.size():
 		var current: Vector2i = queue[queue_head]
 		queue_head += 1
 		if current == goal:
@@ -266,19 +274,14 @@ func find_path(from_world: Vector3, to_world: Vector3, floor_y: float = 0.0) -> 
 			came_from[next] = current
 			queue.append(next)
 	if not found_goal:
-		var fallback := to_world
-		fallback.y = floor_y
-		result.append(fallback)
-		return result
+		return []
 	var cells: Array[Vector2i] = []
 	var cur: Vector2i = goal
 	while cur != start:
 		cells.push_front(cur)
 		cur = came_from[cur]
 	cells.push_front(start)
-	for cell: Vector2i in cells:
-		result.append(tile_center(cell.x, cell.y, floor_y))
-	return result
+	return cells
 
 
 func _is_cell_reachable(cell_x: int, cell_z: int) -> bool:
@@ -320,12 +323,9 @@ func can_reach_spawn_cell(from_world: Vector3, cell_x: int, cell_z: int, floor_y
 		return false
 	if from_world == Vector3.ZERO:
 		return true
-	var goal := tile_center(cell_x, cell_z, floor_y)
-	var path: Array[Vector3] = find_path(from_world, goal, floor_y)
-	if path.is_empty():
-		return false
-	var last: Vector3 = path[path.size() - 1]
-	return Vector2(last.x, last.z).distance_to(Vector2(goal.x, goal.z)) <= tile_size * 0.9
+	var start: Vector2i = _nearest_walkable_tile(from_world)
+	var goal := Vector2i(cell_x, cell_z)
+	return not _find_path_cells(start, goal).is_empty()
 
 
 func find_safe_spawn_position(
@@ -344,8 +344,21 @@ func find_safe_spawn_position(
 		require_reachable
 	)
 	if best == Vector2i(-999, -999):
+		if require_reachable and reach_from != Vector3.ZERO:
+			best = _find_reachable_spawn_in_component(
+				reach_from,
+				floor_y,
+				requested,
+				allow_sealed_pen_interior
+			)
+	if best == Vector2i(-999, -999):
 		var fallback := clamp_to_walkable(requested, floor_y)
 		fallback.y = floor_y
+		if require_reachable and reach_from != Vector3.ZERO:
+			push_warning(
+				"MazeNav: no reachable spawn tile near player; using clamped fallback %s"
+				% str(fallback)
+			)
 		return {
 			"position": fallback,
 			"corrected": true,
@@ -407,3 +420,38 @@ func _is_spawn_candidate(
 	if require_reachable and reach_from != Vector3.ZERO:
 		return can_reach_spawn_cell(reach_from, cell_x, cell_z, floor_y)
 	return true
+
+
+func _find_reachable_spawn_in_component(
+	reach_from: Vector3,
+	floor_y: float,
+	prefer_near: Vector3,
+	allow_sealed_pen_interior: bool
+) -> Vector2i:
+	var start: Vector2i = _nearest_walkable_tile(reach_from)
+	var best := Vector2i(-999, -999)
+	var best_dist: float = INF
+	var queue: Array[Vector2i] = [start]
+	var queue_head: int = 0
+	var visited: Dictionary = {start: true}
+	var dirs: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	while queue_head < queue.size():
+		var current: Vector2i = queue[queue_head]
+		queue_head += 1
+		if current != start and is_spawn_cell_walkable(current.x, current.y, allow_sealed_pen_interior):
+			var pos: Vector3 = tile_center(current.x, current.y, floor_y)
+			var dist: float = Vector2(prefer_near.x, prefer_near.z).distance_to(Vector2(pos.x, pos.z))
+			if dist < best_dist:
+				best_dist = dist
+				best = current
+		for d: Vector2i in dirs:
+			var next: Vector2i = current + d
+			if visited.has(next):
+				continue
+			if not _is_cell_reachable(next.x, next.y):
+				continue
+			visited[next] = true
+			queue.append(next)
+	return best
