@@ -19,6 +19,10 @@ var _active_badge: Label
 var _preview_companion: CompanionDefinition
 var _preview_theme: Color = Color.GRAY
 var _preview_unlocked: bool = false
+var _pending_display_name: String = ""
+var _pending_status_text: String = ""
+var _pending_island_theme: Color = Color.GRAY
+var _has_pending_config: bool = false
 
 
 func _ready() -> void:
@@ -28,6 +32,7 @@ func _ready() -> void:
 	pressed.connect(_on_pressed)
 	_build_children()
 	_preview.draw.connect(_on_preview_draw)
+	_apply_config_if_ready()
 
 
 func configure(
@@ -43,14 +48,34 @@ func configure(
 	is_unlocked = unlocked
 	is_selected = selected
 	disabled = not unlocked
-	tooltip_text = display_name if unlocked else status_text
-	_name_label.text = display_name if unlocked else "???"
-	_status_label.text = status_text
-	_active_badge.visible = unlocked and selected
 	_preview_companion = companion
 	_preview_theme = island_theme
 	_preview_unlocked = unlocked
-	_apply_frame_style(island_theme, unlocked)
+	_pending_display_name = display_name
+	_pending_status_text = status_text
+	_pending_island_theme = island_theme
+	_has_pending_config = true
+	_apply_config_if_ready()
+
+
+func _children_ready() -> bool:
+	return (
+		_name_label != null
+		and _status_label != null
+		and _active_badge != null
+		and _frame != null
+		and _preview != null
+	)
+
+
+func _apply_config_if_ready() -> void:
+	if not _has_pending_config or not _children_ready():
+		return
+	tooltip_text = _pending_display_name if is_unlocked else _pending_status_text
+	_name_label.text = _pending_display_name if is_unlocked else "???"
+	_status_label.text = _pending_status_text
+	_active_badge.visible = is_unlocked and is_selected
+	_apply_frame_style(_pending_island_theme, is_unlocked)
 	_preview.queue_redraw()
 
 

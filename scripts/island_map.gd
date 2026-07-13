@@ -418,7 +418,11 @@ func _swap_main_split(landscape: bool) -> void:
 	main_split.remove_child(pup)
 	main_split.remove_child(route)
 	main_split.queue_free()
-	var replacement: BoxContainer = HBoxContainer.new() if landscape else VBoxContainer.new()
+	var replacement: BoxContainer
+	if landscape:
+		replacement = HBoxContainer.new()
+	else:
+		replacement = VBoxContainer.new()
 	replacement.name = "MainSplit"
 	replacement.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	replacement.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -514,7 +518,7 @@ func _marker_tooltip(island_id: String) -> String:
 	return "Escort complete"
 
 
-func _refresh_pup_card(island: IslandDefinition, progress: Dictionary, unlocked: bool) -> void:
+func _refresh_pup_card(_island: IslandDefinition, progress: Dictionary, unlocked: bool) -> void:
 	var companion: CompanionDefinition = ProgressionRegistryScript.get_special_companion(_current_island_id)
 	var pup_name: String = companion.default_name if companion else "Special pup"
 	var found: bool = _save.is_special_pup_found(_current_island_id)
@@ -630,7 +634,7 @@ func _node_state(local_level: int, progress: Dictionary, island_unlocked: bool) 
 	return IslandRouteNodeScript.State.LOCKED
 
 
-func _level_display_name(island: IslandDefinition, local_level: int) -> String:
+func _level_display_name(_island: IslandDefinition, local_level: int) -> String:
 	var level_id: String = IslandCatalogScript.get_level_id(_current_island_id, local_level)
 	var level: LevelDefinition = ProgressionRegistryScript.get_level(level_id)
 	if level != null and level.display_name != "":
